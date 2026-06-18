@@ -1,0 +1,6 @@
+{
+  "title": "Nexlink dApp Documentation",
+  "description": "Developer documentation for building dApps on the Nexlink platform",
+  "language": "en",
+  "gitbook": ">=3.2.0"
+}
