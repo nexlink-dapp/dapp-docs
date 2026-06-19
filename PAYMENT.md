@@ -394,7 +394,7 @@ stateDiagram-v2
 
 ### Idempotency
 
-- **Order creation** is idempotent on `(dapp_id, merchantOrderId)`. Creating an order with the same `merchantOrderId` returns the existing order instead of creating a duplicate.
+- **Order creation** is idempotent on `(dapp_id, externalOrderId)` when `externalOrderId` is provided. Creating an order with the same value returns the existing order instead of creating a duplicate.
 - **Order payment** is idempotent on `orderId`. Paying an already-paid order returns success with the existing `txHash`.
 - **Payment sessions** are NOT idempotent. Each `POST /dapp/payment/create` generates a new `payToken`. Multiple sessions can exist for the same order (e.g., when user refreshes QR).
 
@@ -423,7 +423,7 @@ X-Nexlink-Signature: a1b2c3d4e5f6...
 
 {
   "orderId": "nx-uuid-123",
-  "merchantOrderId": "shop-001",
+  "externalOrderId": "shop-001",
   "status": 2,
   "amount": 10000000,
   "symbol": "USDK",

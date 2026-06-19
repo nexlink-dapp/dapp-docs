@@ -99,12 +99,12 @@ Represents a payment order created by [POST /dapp/order/create](#post-dapporderc
 | Field | Type | Description |
 |---|---|---|
 | `orderId` | String | Nexlink-assigned order UUID |
-| `merchantOrderId` | String | dApp-assigned order identifier |
+| `externalOrderId` | String | _Optional._ dApp-assigned order identifier for correlation |
 | `amount` | Integer | Payment amount in smallest unit (5 decimals: `100000` = `1.00`) |
 | `symbol` | String | Token symbol: `"USDK"` or `"CNYT"` |
 | `status` | Integer | `1` = pending, `2` = paid, `3` = cancelled, `4` = expired |
 | `txHash` | String | _Optional._ On-chain transaction hash. Present when `status` is `2`. |
-| `callbackUrl` | String | Webhook delivery URL |
+| `callbackUrl` | String | _Optional._ Webhook delivery URL |
 | `expireAt` | Integer | Unix timestamp when this order expires |
 | `paidAt` | Integer | _Optional._ Unix timestamp when payment was confirmed |
 
@@ -165,7 +165,7 @@ Payload delivered to the dApp's `callbackUrl` when an order is paid.
 | Field | Type | Description |
 |---|---|---|
 | `orderId` | String | Nexlink-assigned order UUID |
-| `merchantOrderId` | String | dApp-assigned order identifier |
+| `externalOrderId` | String | _Optional._ dApp-assigned order identifier (present if provided at creation) |
 | `status` | Integer | Always `2` (paid) |
 | `amount` | Integer | Payment amount in smallest unit |
 | `symbol` | String | Token symbol (`"USDK"` or `"CNYT"`) |
@@ -440,7 +440,7 @@ Creates a new payment order. The dApp backend calls this before initiating payme
 
 | Parameter | Type | Required | Description |
 |---|---|---|---|
-| `merchantOrderId` | String | Yes | dApp-assigned order identifier (unique per dApp) |
+| `externalOrderId` | String | No | dApp-assigned order identifier for correlation (unique per dApp if provided) |
 | `amount` | Integer | Yes | Amount in smallest unit (5 decimals: `100000` = `1.00`) |
 | `symbol` | String | Yes | Token symbol: `"USDK"` or `"CNYT"` |
 | `to` | String | Yes | Recipient wallet address (hex, checksummed) |
@@ -452,7 +452,7 @@ Creates a new payment order. The dApp backend calls this before initiating payme
 ```json
 {
   "orderId": "550e8400-e29b-41d4-a716-446655440000",
-  "merchantOrderId": "shop-001",
+  "externalOrderId": "shop-001",
   "amount": 10000000,
   "symbol": "USDK",
   "status": 1,
@@ -460,7 +460,7 @@ Creates a new payment order. The dApp backend calls this before initiating payme
 }
 ```
 
-> **Idempotent:** Creating an order with an existing `merchantOrderId` returns the existing order.
+> **Idempotent:** If `externalOrderId` is provided, creating an order with the same value returns the existing order instead of creating a duplicate.
 
 **Errors:**
 
@@ -486,7 +486,7 @@ Queries the current status of a payment order.
 ```json
 {
   "orderId": "550e8400-e29b-41d4-a716-446655440000",
-  "merchantOrderId": "shop-001",
+  "externalOrderId": "shop-001",
   "amount": 10000000,
   "symbol": "USDK",
   "status": 2,
