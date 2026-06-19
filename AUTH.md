@@ -59,48 +59,50 @@ When a user opens a dApp inside the Nexlink app, login is **fully automatic** �
 
 ### Detailed injection pipeline
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│  Nexlink App                                                  │
-│                                                               │
-│  1. User taps dApp in browser/explorer                        │
-│                                                               │
-│  2. DappSdkInjector.kickOff() starts two parallel tasks:      │
-│     a. Preload per-chain wallet addresses                     │
-│     b. Fetch signed initData (cache or network)               │
-│          │                                                    │
-│          ▼                                                    │
-│  3. Cache check (DappInitDataCache):                          │
-│     - Fresh (<30min): serve immediately, no network           │
-│     - Usable (30min-24h): serve stale, refresh in background  │
-│     - Unconfigured (errCode 1001): skip, dApp has no secret   │
-│     - Miss: call POST /browser/init_data (3s timeout cap)     │
-│          │                                                    │
-│  4. WebView navigation starts (parallel with step 3)          │
-│          │                                                    │
-│  5. onPageStarted fires → inject in order:                    │
-│     a. Viewport compat shim                                   │
-│     b. window.__NEXLINK_APP_VERSION__ = "<real version>"      │
-│     c. window.__nexlink_addresses = { chainId: "0x..." }      │
-│     d. Stub SDK (JsBridge.stubScript)                         │
-│        - Installs window.NexlinkApp immediately               │
-│        - Queues all method calls into __pending.calls          │
-│        - Queues onReady callbacks into __pending.readyCbs      │
-│        - Getter-backed initData reads from __NEXLINK_STATE__  │
-│          │                                                    │
-│  6. When initData resolves (from cache or network):           │
-│     → Inject real SDK (JsBridge.buildScript)                  │
-│     → Updates __NEXLINK_STATE__ with signed payload            │
-│     → Replays all queued calls in order                       │
-│     → Fires onReady callbacks                                 │
-│          │                                                    │
-│  7. dApp JS reads NexlinkApp.initData                         │
-│     Sends to its own backend for verification                 │
-│          │                                                    │
-│  8. dApp backend verifies signature (Mode A or B)             │
-│     Creates session → user is logged in                       │
-│                                                               │
-└──────────────────────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    participant User
+    participant App as Nexlink App
+    participant Cache as DappInitDataCache
+    participant API as POST /browser/init_data
+    participant WV as WebView
+    participant dApp as dApp JS
+    participant BE as dApp Backend
+
+    User->>App: Tap dApp in browser/explorer
+    App->>App: DappSdkInjector.kickOff()
+
+    par Parallel tasks
+        App->>App: Preload per-chain wallet addresses
+    and
+        App->>Cache: Check initData cache
+        alt Fresh (<30min)
+            Cache-->>App: Serve immediately
+        else Usable (30min-24h)
+            Cache-->>App: Serve stale
+            App->>API: Refresh in background
+        else Unconfigured (errCode 1001)
+            Cache-->>App: Skip (no secret)
+        else Miss
+            App->>API: Fetch initData (3s timeout)
+            API-->>App: Signed initData
+        end
+    end
+
+    App->>WV: Start navigation (parallel with fetch)
+    Note over WV: onPageStarted fires
+    App->>WV: 1. Viewport compat shim
+    App->>WV: 2. __NEXLINK_APP_VERSION__
+    App->>WV: 3. __nexlink_addresses
+    App->>WV: 4. Stub SDK (queues calls & onReady)
+
+    App->>WV: initData resolves → inject real SDK
+    Note over WV: Updates __NEXLINK_STATE__<br/>Replays queued calls<br/>Fires onReady callbacks
+
+    dApp->>dApp: Read NexlinkApp.initData
+    dApp->>BE: Send initData for verification
+    BE->>BE: Verify signature (Mode A or B)
+    BE-->>dApp: Session created → logged in
 ```
 
 **If initData fetch times out (3s) or fails:** The real SDK is still injected with `initData = ""`. EIP-1193 wallet bridge (`window.ethereum`) still works. The dApp operates as a plain web page without signed identity.
@@ -155,34 +157,29 @@ When a user opens a dApp inside the Nexlink app, login is **fully automatic** �
 
 When a user visits a dApp URL in a regular browser (not inside the Nexlink app), there is no `window.NexlinkApp` object. The dApp must fall back to a **QR code login flow**.
 
-```
-┌─────────────────────┐    ┌──────────────────┐    ┌─────────────────────┐
-│  General Browser     │    │  Nexlink Backend  │    │  Nexlink Mobile App  │
-│  (Chrome/Safari)     │    │                  │    │                     │
-│                      │    │                  │    │                     │
-│  1. dApp backend     │    │                  │    │                     │
-│     creates QR       │    │                  │    │                     │
-│     session via      │    │                  │    │                     │
-│     Nexlink API ─────┼───►│ POST /dapp/qr/   │    │                     │
-│                      │    │ create           │    │                     │
-│  2. Show QR code     │    │                  │    │                     │
-│         ┌────┐       │    │                  │    │                     │
-│         │ QR │ ◄─────┼────┼──────────────────┼────┼── 3. User scans QR  │
-│         └────┘       │    │                  │    │                     │
-│                      │    │                  │    │  4. App confirms     │
-│                      │    │  5. Backend signs │◄───┼── POST /dapp/qr/    │
-│                      │    │     initData,     │    │    confirm          │
-│                      │    │     stores with   │    │    { token, dappId }│
-│  6. dApp backend     │    │     qrToken      │    │                     │
-│     polls for  ──────┼───►│                  │    │                     │
-│     result           │    │  GET /dapp/qr/   │    │                     │
-│                      │    │  status          │    │                     │
-│  7. Receives         │◄───┼── { initData }   │    │                     │
-│     initData,        │    │                  │    │                     │
-│     verifies,        │    │                  │    │                     │
-│     creates session  │    │                  │    │                     │
-│                      │    │                  │    │                     │
-└─────────────────────┘    └──────────────────┘    └─────────────────────┘
+```mermaid
+sequenceDiagram
+    participant Browser as General Browser<br/>(Chrome/Safari)
+    participant BE as dApp Backend
+    participant NX as Nexlink Backend
+    participant App as Nexlink Mobile App
+
+    BE->>NX: POST /dapp/qr/create
+    NX-->>BE: { qrToken }
+    BE-->>Browser: Display QR code
+
+    App->>Browser: User scans QR code
+    App->>NX: POST /dapp/qr/confirm<br/>{ token, dappId }
+    NX->>NX: Sign initData, store with qrToken
+
+    loop Poll for result
+        BE->>NX: GET /dapp/qr/status
+    end
+    NX-->>BE: { initData }
+
+    BE->>BE: Verify signature
+    BE->>BE: Create session
+    BE-->>Browser: User is logged in
 ```
 
 **The Nexlink app never touches any external URL.** It only talks to the Nexlink backend. The QR code contains no callback URL — only a token and dApp ID. This eliminates the `callback=https://evil.com` attack vector entirely.
@@ -685,36 +682,30 @@ The Dual-Mode Template (Section 6) requires each dApp developer to implement QR 
 
 ### 7.2. What the widget does internally
 
+```mermaid
+flowchart TD
+    A["nexlink-login-widget.js<br/>(hosted on Nexlink CDN)"] --> B["Read data-* attributes<br/>from &lt;script&gt; tag"]
+    B --> C{"window.NexlinkApp<br/>exists?"}
+
+    C -->|YES| D["In-app mode (auto-login)"]
+    D --> D1["NexlinkApp.onReady(cb)"]
+    D1 --> D2["Read NexlinkApp.initData"]
+    D2 --> D3["Call data-onauth callback"]
+
+    C -->|NO| E["Browser mode (QR login)"]
+    E --> E1["POST /dapp/qr/create"]
+    E1 --> E2["Render QR code"]
+    E2 --> E3["Start long-poll loop"]
+    E3 --> E4{"Result?"}
+    E4 -->|Confirmed| E5["Call data-onauth callback"]
+    E4 -->|Expired| E6["Show refresh button"]
+
+    style A fill:#4a9eff,color:#fff
+    style C fill:#ff9800,color:#fff
+    style E4 fill:#ff9800,color:#fff
 ```
-┌─────────────────────────────────────────────────────────┐
-│  nexlink-login-widget.js (hosted on Nexlink CDN)        │
-│                                                         │
-│  1. Read data-* attributes from <script> tag            │
-│                                                         │
-│  2. Detect environment:                                 │
-│     ├─ window.NexlinkApp exists?                        │
-│     │  YES → In-app mode (auto-login)                   │
-│     │        • NexlinkApp.onReady(cb)                   │
-│     │        • Read NexlinkApp.initData                 │
-│     │        • Call data-onauth callback immediately     │
-│     │                                                   │
-│     │  NO → Browser mode (QR login)                     │
-│     │       • POST /dapp/qr/create (Nexlink API)        │
-│     │       • Render QR code into container element      │
-│     │       • Start long-poll loop                      │
-│     │       • On confirmed → call data-onauth callback  │
-│     │       • On expired → show refresh button          │
-│                                                         │
-│  3. Widget provides:                                    │
-│     • "Log in with Nexlink" branded button              │
-│     • QR code display with countdown timer              │
-│     • Loading spinner during poll                       │
-│     • Auto-refresh on expiry                            │
-│     • Mobile-responsive layout                          │
-│     • Dark/light theme (auto-detect or data-theme)      │
-│                                                         │
-└─────────────────────────────────────────────────────────┘
-```
+
+**Widget UI features:** branded "Log in with Nexlink" button, QR code display with countdown timer, loading spinner during poll, auto-refresh on expiry, mobile-responsive layout, dark/light theme (auto-detect or `data-theme`).
 
 ### 7.3. Widget `<script>` attributes
 
@@ -958,39 +949,35 @@ Every danbao user ends up with **one account** regardless of how they first arri
 
 All Nexlink-based methods (2, 3, 4) deliver the same `initData` payload to the dApp backend. The backend handles them identically: verify signature → look up `nexlink_user_id` → respond.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                                                                  │
-│  Method 1: Form registration (no Nexlink needed)                 │
-│  ───────────────────────────────────────────────                 │
-│  User visits danbao-web → fills register form                    │
-│  → account created with username, password, email                │
-│  → nexlink_user_id = NULL                                        │
-│  → user can later bind Nexlink via Method 4                      │
-│                                                                  │
-│  Method 2: QR code scan login (general browser)                  │
-│  ──────────────────────────────────────────────                  │
-│  User visits danbao-web in Chrome/Safari                         │
-│  → site shows QR code (or Nexlink Login Widget)                  │
-│  → user scans with Nexlink app → confirms                        │
-│  → Nexlink backend delivers initData to dApp backend             │
-│  → backend verifies → checks nexlink_user_id binding             │
-│                                                                  │
-│  Method 3: dApp browser login (inside Nexlink app)               │
-│  ─────────────────────────────────────────────────               │
-│  User opens danbao inside Nexlink app                            │
-│  → initData auto-injected by SDK                                 │
-│  → frontend sends initData to dApp backend                       │
-│  → backend verifies → checks nexlink_user_id binding             │
-│                                                                  │
-│  Method 4: Browser authorization popup                           │
-│  ────────────────────────────────────────                        │
-│  After Method 2 or 3 delivers initData for an UNBOUND user:     │
-│  → backend returns { status: "unbound", nexlinkUser }            │
-│  → browser shows popup: "Bind existing account or create new?"   │
-│  → user chooses to bind (enter password) or create fresh         │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph M1["Method 1: Form Registration"]
+        direction TB
+        M1A["User visits danbao-web"] --> M1B["Fills register form"]
+        M1B --> M1C["Account created<br/>nexlink_user_id = NULL"]
+        M1C --> M1D["Can bind Nexlink later<br/>via Method 4"]
+    end
+
+    subgraph M2["Method 2: QR Code Scan"]
+        direction TB
+        M2A["User visits danbao-web<br/>in Chrome/Safari"] --> M2B["Site shows QR code"]
+        M2B --> M2C["User scans with<br/>Nexlink app"]
+        M2C --> M2D["Backend verifies initData<br/>→ checks binding"]
+    end
+
+    subgraph M3["Method 3: dApp Browser"]
+        direction TB
+        M3A["User opens danbao<br/>inside Nexlink app"] --> M3B["initData auto-injected"]
+        M3B --> M3C["Frontend sends initData"]
+        M3C --> M3D["Backend verifies<br/>→ checks binding"]
+    end
+
+    subgraph M4["Method 4: Authorization Popup"]
+        direction TB
+        M4A["initData for UNBOUND user<br/>(from Method 2 or 3)"] --> M4B["Backend returns<br/>{status: unbound}"]
+        M4B --> M4C["Popup: Bind existing<br/>or create new?"]
+        M4C --> M4D["Bind (enter password)<br/>or create fresh"]
+    end
 ```
 
 #### Method 1: Form registration
@@ -1701,12 +1688,26 @@ This section covers the overall trust model and threat mitigations. Endpoint-spe
 
 ### Trust boundaries
 
-```
-TRUSTED:     Nexlink native app, Nexlink API, dApp backend
-             (share dapp.secret_key)
+```mermaid
+flowchart LR
+    subgraph TRUSTED["🟢 Trusted Zone"]
+        A["Nexlink Native App"]
+        B["Nexlink API"]
+        C["dApp Backend"]
+    end
 
-UNTRUSTED:   dApp frontend (JS in WebView or browser), network
-             (receives signed initData it cannot forge)
+    subgraph UNTRUSTED["🔴 Untrusted Zone"]
+        D["dApp Frontend<br/>(JS in WebView/browser)"]
+        E["Network"]
+    end
+
+    A <-->|"share<br/>dapp.secret_key"| B
+    B <-->|"share<br/>dapp.secret_key"| C
+    C -->|"signed initData<br/>(cannot forge)"| D
+    D ---|"transit"| E
+
+    style TRUSTED fill:#e8f5e9,stroke:#4caf50,stroke-width:2px
+    style UNTRUSTED fill:#ffebee,stroke:#f44336,stroke-width:2px
 ```
 
 ### Threat mitigations
