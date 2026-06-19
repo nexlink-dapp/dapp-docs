@@ -92,6 +92,97 @@ Returned by [POST /user/login-nexlink](#post-userlogin-nexlink) when the Nexlink
 
 ---
 
+### PaymentOrder
+
+Represents a payment order created by [POST /dapp/order/create](#post-dappordercreate).
+
+| Field | Type | Description |
+|---|---|---|
+| `orderId` | String | Nexlink-assigned order UUID |
+| `merchantOrderId` | String | dApp-assigned order identifier |
+| `amount` | Integer | Payment amount in smallest unit (5 decimals: `100000` = `1.00`) |
+| `symbol` | String | Token symbol: `"USDK"` or `"CNYT"` |
+| `status` | Integer | `1` = pending, `2` = paid, `3` = cancelled, `4` = expired |
+| `txHash` | String | _Optional._ On-chain transaction hash. Present when `status` is `2`. |
+| `callbackUrl` | String | Webhook delivery URL |
+| `expireAt` | Integer | Unix timestamp when this order expires |
+| `paidAt` | Integer | _Optional._ Unix timestamp when payment was confirmed |
+
+---
+
+### PaymentSession
+
+Represents a QR payment session created by [POST /dapp/payment/create](#post-dapppaymentcreate). Used for browser-based payments via QR code.
+
+| Field | Type | Description |
+|---|---|---|
+| `payToken` | String | One-time payment session token (UUID) |
+| `expiresAt` | Integer | Unix timestamp when this session expires (5 minutes from creation) |
+
+---
+
+### PaymentStatus
+
+Response from [GET /dapp/payment/status](#get-dapppaymentstatus).
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | String | `"pending"`, `"paid"`, or `"expired"` |
+| `orderId` | String | _Optional._ Order UUID. Present when `status` is `"paid"`. |
+| `txHash` | String | _Optional._ Transaction hash. Present when `status` is `"paid"`. |
+
+---
+
+### PaymentResult
+
+Return value from `NexlinkApp.payment.pay()` (in-app JS SDK).
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | String | `"paid"`, `"cancelled"`, or `"failed"` |
+| `txHash` | String | _Optional._ Transaction hash. Present when `status` is `"paid"`. |
+| `orderId` | String | The order UUID |
+| `error` | String | _Optional._ Error message. Present when `status` is `"failed"`. |
+
+---
+
+### TransferResult
+
+Return value from `NexlinkApp.payment.transfer()` (in-app JS SDK, direct transfer mode).
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | String | `"sent"`, `"cancelled"`, or `"failed"` |
+| `txHash` | String | _Optional._ Transaction hash. Present when `status` is `"sent"`. |
+| `error` | String | _Optional._ Error message. Present when `status` is `"failed"`. |
+
+---
+
+### WebhookPayload
+
+Payload delivered to the dApp's `callbackUrl` when an order is paid.
+
+| Field | Type | Description |
+|---|---|---|
+| `orderId` | String | Nexlink-assigned order UUID |
+| `merchantOrderId` | String | dApp-assigned order identifier |
+| `status` | Integer | Always `2` (paid) |
+| `amount` | Integer | Payment amount in smallest unit |
+| `symbol` | String | Token symbol (`"USDK"` or `"CNYT"`) |
+| `txHash` | String | On-chain transaction hash |
+| `paidAt` | Integer | Unix timestamp when payment was confirmed |
+
+**Headers:**
+
+| Header | Description |
+|---|---|
+| `X-Nexlink-Timestamp` | Unix timestamp of webhook delivery |
+| `X-Nexlink-Signature` | HMAC-SHA256 hex signature for verification |
+
+> For webhook signature verification, see [PAYMENT.md Section 6](PAYMENT.md#6-webhook-callbacks).
+
+---
+
 ## Signature Verification
 
 dApp backends must verify the `hash` field in [InitData](#initdata) before trusting the payload.
@@ -296,6 +387,373 @@ Remote [InitData](#initdata) signature verification. For dApps that prefer not t
 | errCode | Description |
 |---|---|
 | 40002 | Bad signature — initData is invalid or tampered |
+
+---
+
+## Payment API
+
+These endpoints handle payment order management and QR payment sessions. For architecture details, see [Payment Integration](PAYMENT.md).
+
+**Base URL:** `https://nexlink-api` (same as Nexlink Platform API)
+
+---
+
+### POST /dapp/order/create
+
+Creates a new payment order. The dApp backend calls this before initiating payment. Returns a [PaymentOrder](#paymentorder) on success.
+
+**Authorization:** `Bearer <dapp_api_key>`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `merchantOrderId` | String | Yes | dApp-assigned order identifier (unique per dApp) |
+| `amount` | Integer | Yes | Amount in smallest unit (5 decimals: `100000` = `1.00`) |
+| `symbol` | String | Yes | Token symbol: `"USDK"` or `"CNYT"` |
+| `to` | String | Yes | Recipient wallet address (hex, checksummed) |
+| `callbackUrl` | String | No | Webhook URL for payment notification |
+| `expireSeconds` | Integer | No | Order TTL in seconds (default: 3600) |
+
+**Returns:** [PaymentOrder](#paymentorder)
+
+```json
+{
+  "orderId": "550e8400-e29b-41d4-a716-446655440000",
+  "merchantOrderId": "shop-001",
+  "amount": 10000000,
+  "symbol": "USDK",
+  "status": 1,
+  "expireAt": 1718703600
+}
+```
+
+> **Idempotent:** Creating an order with an existing `merchantOrderId` returns the existing order.
+
+**Errors:**
+
+| HTTP Status | Description |
+|---|---|
+| 401 | Invalid or missing API key |
+| 400 | Invalid amount, symbol, or address |
+
+---
+
+### POST /dapp/order/query
+
+Queries the current status of a payment order.
+
+**Authorization:** `Bearer <dapp_api_key>`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `orderId` | String | Yes | Nexlink order UUID |
+
+**Returns:** [PaymentOrder](#paymentorder)
+
+```json
+{
+  "orderId": "550e8400-e29b-41d4-a716-446655440000",
+  "merchantOrderId": "shop-001",
+  "amount": 10000000,
+  "symbol": "USDK",
+  "status": 2,
+  "txHash": "0xabc123...",
+  "paidAt": 1718700100
+}
+```
+
+**Errors:**
+
+| HTTP Status | Description |
+|---|---|
+| 401 | Invalid or missing API key |
+| 404 | Order not found |
+
+---
+
+### POST /dapp/order/cancel
+
+Cancels a pending payment order. Only orders with status `1` (pending) can be cancelled.
+
+**Authorization:** `Bearer <dapp_api_key>`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `orderId` | String | Yes | Nexlink order UUID |
+
+**Returns:**
+
+```json
+{ "errCode": 0 }
+```
+
+**Errors:**
+
+| HTTP Status | Description |
+|---|---|
+| 401 | Invalid or missing API key |
+| 400 | Order is not in pending status |
+| 404 | Order not found |
+
+---
+
+### POST /dapp/order/pay
+
+Marks an order as paid. Called by the **NexLink mobile app** after the user confirms an in-app payment and the on-chain transaction is broadcast.
+
+**Authorization:** `Bearer <user's nexlinkToken>`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `orderId` | String | Yes | Nexlink order UUID |
+| `txHash` | String | Yes | On-chain transaction hash |
+
+**Returns:**
+
+```json
+{ "errCode": 0 }
+```
+
+**Errors:**
+
+| HTTP Status | Description |
+|---|---|
+| 400 | Order expired or already paid |
+| 401 | User not authenticated |
+| 404 | Order not found |
+
+**Side effects:**
+- Transitions order to `paid` (status `2`)
+- Records `txHash` and `paidAt`
+- Enqueues webhook delivery to `callbackUrl`
+
+---
+
+### POST /dapp/payment/create
+
+Creates a QR payment session for browser-based payments. Linked to an existing order. Returns a [PaymentSession](#paymentsession) on success.
+
+**Authorization:** `Bearer <dapp_api_key>`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `orderId` | String | Yes | Nexlink order UUID (must be pending) |
+| `clientId` | Integer | Yes | dApp numeric ID |
+
+**Returns:** [PaymentSession](#paymentsession)
+
+```json
+{
+  "payToken": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "expiresAt": 1718700300
+}
+```
+
+The dApp backend encodes the token into a deep link for the QR code:
+
+```
+nexlink://pay?token=<payToken>&dapp=<clientId>
+```
+
+> The QR code contains **no amount, no address, no callback URL** — only the token and dApp ID.
+
+**Errors:**
+
+| HTTP Status | Description |
+|---|---|
+| 401 | Invalid or missing API key |
+| 400 | Order is not in pending status |
+| 404 | Order not found |
+
+---
+
+### GET /dapp/payment/info
+
+Fetches payment details for a scanned QR code. Called by the **NexLink mobile app** after the user scans a payment QR.
+
+**Authorization:** `Bearer <user's nexlinkToken>`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `token` | String | Yes | Payment session token (query parameter) |
+
+**Returns:**
+
+```json
+{
+  "orderId": "550e8400-e29b-41d4-a716-446655440000",
+  "amount": 10000000,
+  "symbol": "USDK",
+  "to": "0x1234...abcd",
+  "dappName": "MyShop",
+  "dappIcon": "https://cdn.nexlink.app/dapp/myshop.png",
+  "label": "Order #shop-001",
+  "expiresAt": 1718700300
+}
+```
+
+**Errors:**
+
+| HTTP Status | Description |
+|---|---|
+| 400 | Token expired or invalid |
+| 401 | User not authenticated |
+| 404 | Payment session not found |
+
+---
+
+### POST /dapp/payment/confirm
+
+Called by the **NexLink mobile app** after the user confirms a QR payment and the on-chain transaction is broadcast. The backend marks the linked order as paid and stores the result for polling via [GET /dapp/payment/status](#get-dapppaymentstatus).
+
+**Authorization:** `Bearer <user's nexlinkToken>`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `payToken` | String | Yes | Payment session token |
+| `txHash` | String | Yes | On-chain transaction hash |
+
+**Returns:**
+
+```json
+{ "errCode": 0 }
+```
+
+**Errors:**
+
+| HTTP Status | Description |
+|---|---|
+| 400 | Token expired or already used |
+| 401 | User not authenticated |
+
+**Side effects:**
+- Transitions linked order to `paid` (status `2`)
+- Records `txHash` and `paidAt`
+- Stores result with `payToken` for status polling
+- Enqueues webhook delivery to `callbackUrl`
+
+---
+
+### GET /dapp/payment/status
+
+Polls for QR payment result. Supports **long polling** — the server holds the connection for up to 25 seconds, returning immediately when the status changes. Returns a [PaymentStatus](#paymentstatus) object.
+
+**Authorization:** `Bearer <dapp_api_key>`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `token` | String | Yes | Payment session token (query parameter) |
+| `clientId` | Integer | Yes | dApp numeric ID (query parameter) |
+
+**Returns:** [PaymentStatus](#paymentstatus)
+
+Pending (server held ~25s, then returned):
+
+```json
+{ "status": "pending" }
+```
+
+Paid (includes order and transaction details):
+
+```json
+{
+  "status": "paid",
+  "orderId": "550e8400-e29b-41d4-a716-446655440000",
+  "txHash": "0xabc123..."
+}
+```
+
+Expired:
+
+```json
+{ "status": "expired" }
+```
+
+| Status | Meaning | dApp Action |
+|---|---|---|
+| `pending` | User has not scanned or confirmed yet | Reconnect immediately |
+| `paid` | User confirmed — transaction complete | Update UI, fulfill order |
+| `expired` | Session TTL exceeded | Show "QR expired", offer refresh |
+
+> **One-time read:** After returning `paid`, the server deletes the stored result. A second request returns `expired`.
+
+---
+
+## JS SDK — Payment Methods
+
+These methods are available on `window.NexlinkApp.payment` inside the NexLink dApp browser. They are **not available** in external browsers.
+
+For detection:
+
+```javascript
+if (window.NexlinkApp && NexlinkApp.payment) {
+  // In-app: payment methods available
+} else {
+  // External browser: use QR payment flow instead
+}
+```
+
+---
+
+### NexlinkApp.payment.pay
+
+Triggers payment for a pre-created order. Shows a native confirmation UI. Returns a [PaymentResult](#paymentresult).
+
+```javascript
+const result = await NexlinkApp.payment.pay({
+  orderId: "550e8400-e29b-41d4-a716-446655440000"
+});
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `orderId` | String | Yes | Order UUID from [POST /dapp/order/create](#post-dappordercreate) |
+
+**Returns:** [PaymentResult](#paymentresult)
+
+---
+
+### NexlinkApp.payment.transfer
+
+Requests a direct token transfer without a backend order. Shows a native confirmation UI. Returns a [TransferResult](#transferresult). **In-app only.**
+
+```javascript
+const result = await NexlinkApp.payment.transfer({
+  to: "0x1234...abcd",
+  amount: "100.00",
+  token: "USDK"
+});
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `to` | String | Yes | Recipient wallet address (hex, checksummed) |
+| `amount` | String | Yes | Human-readable amount (e.g., `"100.00"`) |
+| `token` | String | Yes | Token symbol: `"USDK"` or `"CNYT"` |
+
+**Returns:** [TransferResult](#transferresult)
+
+---
+
+### NexlinkApp.payment.getOrderStatus
+
+Queries an order's current status from the NexLink app without a backend round-trip.
+
+```javascript
+const status = await NexlinkApp.payment.getOrderStatus({
+  orderId: "550e8400-e29b-41d4-a716-446655440000"
+});
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `orderId` | String | Yes | Order UUID |
+
+**Returns:**
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | String | `"pending"`, `"paid"`, `"cancelled"`, or `"expired"` |
+| `txHash` | String | _Optional._ Transaction hash. Present when `status` is `"paid"`. |
 
 ---
 
