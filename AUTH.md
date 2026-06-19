@@ -9,9 +9,10 @@ This document serves two audiences:
 | Audience | What to read |
 |---|---|
 | **Any dApp developer** integrating Nexlink login | **Part I** (Sections 1-7): login flows, signature verification, QR deep links, embeddable widget |
-| **Danbao team** adding Nexlink to the existing OAuth2 app | Skim Part I for context, then focus on **Part II** (Sections 8-19): migration, endpoints, frontend |
+| **Quick API lookup** | **Part II** (Sections 8-10): request/response specs for every endpoint, initData payload format |
+| **Danbao team** adding Nexlink to the existing OAuth2 app | Skim Part I for context, then focus on **Part III** (Sections 11-22): migration, endpoints, frontend |
 
-**Part III** (Security & Scalability) is relevant for production deployment regardless of audience. **Part IV** tracks implementation status.
+**Part IV** (Security & Scalability) is relevant for production deployment regardless of audience. **Part V** tracks implementation status.
 
 ---
 
@@ -292,7 +293,7 @@ Authorization: Bearer <dapp_api_key>
 On `confirmed`, the dApp backend:
 
 1. **Verifies initData** signature (Mode A with local secret, or trust it since it came from Nexlink API over authenticated channel).
-2. **Looks up user** by `nexlink_user_id`. If not found, returns `"unbound"` — the dApp handles binding or account creation (see Section 10 for danbao's implementation, or implement your own).
+2. **Looks up user** by `nexlink_user_id`. If not found, returns `"unbound"` — the dApp handles binding or account creation (see Section 13 for danbao's implementation, or implement your own).
 3. **Issues its own session token** (OAuth2 token, JWT, etc.).
 4. Returns the session token to the browser (via the browser's poll to `/api/auth/qr/status`).
 
@@ -863,15 +864,37 @@ The widget JS file is served from the Nexlink backend's static assets. Core stru
 
 ---
 
-# Part II: Danbao Integration Guide
+# Part II: API Interface Reference
+
+For the complete API specification — types, endpoints, request/response formats, and error codes — see the standalone **[API Reference](API.md)**.
+
+The table below provides a quick overview. For implementation details, see Part III.
+
+### Endpoint Summary
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/browser/init_data` | Internal | Generate signed initData (mobile app only) |
+| POST | `/dapp/qr/create` | `Bearer <dapp_api_key>` | Create QR login session |
+| POST | `/dapp/qr/confirm` | `Bearer <user_token>` | Confirm QR scan (mobile app only) |
+| GET | `/dapp/qr/status` | `Bearer <dapp_api_key>` | Poll for QR result (long-poll, 25s) |
+| POST | `/dapp/verify` | None | Remote initData verification |
+| POST | `/api/v1/user/login-nexlink` | None | Verify initData → login or "unbound" |
+| POST | `/api/v1/user/bind-nexlink` | None | Bind Nexlink to existing account |
+| POST | `/api/v1/user/create-nexlink` | None | Create account from Nexlink |
+| POST | `/api/v1/user/unbind-nexlink` | `Bearer <session>` | Disconnect Nexlink binding |
 
 ---
 
-## 8. Overview & Current Auth
+# Part III: Danbao Integration Guide
+
+---
+
+## 11. Overview & Current Auth
 
 Danbao (`danbao/`) has its **own independent auth system** that predates the Nexlink dApp browser. To work as a Nexlink dApp, danbao must support both auth paths — the existing username/password flow and the new initData-based flow.
 
-### 8.1. Danbao's current auth (standalone)
+### 11.1. Danbao's current auth (standalone)
 
 Danbao uses a full OAuth2 server (`danbao-api/pkg/oauth2server/`):
 
@@ -886,7 +909,7 @@ Danbao uses a full OAuth2 server (`danbao-api/pkg/oauth2server/`):
 
 ---
 
-## 9. Database Migration
+## 12. Database Migration
 
 The current `users` table has **no column to store a Nexlink user ID**, and `password_hash` / `email` are `NOT NULL` — blocking auto-creation from initData.
 
@@ -936,7 +959,7 @@ ALTER TABLE users
 
 ---
 
-## 10. Four Login Methods — One Account
+## 13. Four Login Methods — One Account
 
 Every danbao user ends up with **one account** regardless of how they first arrive. The four entry methods are:
 
@@ -1055,9 +1078,9 @@ When initData arrives for an unknown `nexlink_user_id`, the frontend shows a pop
 └──────────────────────────────────────────────┘
 ```
 
-**Option A — Bind existing account:** User enters their danbao username and password. See Section 13 for the endpoint.
+**Option A — Bind existing account:** User enters their danbao username and password. See Section 16 for the endpoint.
 
-**Option B — Create new account:** One-click, no form needed. See Section 14 for the endpoint.
+**Option B — Create new account:** One-click, no form needed. See Section 17 for the endpoint.
 
 The user can later set a password via `POST /user/set-password` to enable form login.
 
@@ -1103,7 +1126,7 @@ Issue OAuth2 token → return { status: "ok", token, user }
 
 ---
 
-## 11. Backend Service Methods
+## 14. Backend Service Methods
 
 ```go
 // FindByNexlinkUserID looks up a danbao user by Nexlink ID.
@@ -1140,7 +1163,7 @@ func (s *Service) SetNexlinkUserID(ctx context.Context, userID int64, nexlinkUse
 }
 
 // ClearNexlinkUserID removes the Nexlink binding from an account.
-// Called when user disconnects their Nexlink identity (Section 15).
+// Called when user disconnects their Nexlink identity (Section 18).
 func (s *Service) ClearNexlinkUserID(ctx context.Context, userID int64) error {
     return s.repo.ClearNexlinkUserID(ctx, userID)
 }
@@ -1179,11 +1202,11 @@ UPDATE users SET nexlink_user_id = NULL WHERE id = $1;
 
 ---
 
-## 12. Endpoint: `POST /user/login-nexlink`
+## 15. Endpoint: `POST /user/login-nexlink`
 
 Verifies initData, looks up the bound user, and returns `"ok"` or `"unbound"`.
 
-### 12.1. Handler
+### 15.1. Handler
 
 ```go
 // POST /api/v1/user/login-nexlink
@@ -1200,7 +1223,7 @@ func (h *Handler) LoginNexlink(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // 2. Replay prevention — reject reused initData (see Section 12.2)
+    // 2. Replay prevention — reject reused initData (see Section 15.2)
     if err := h.checkReplay(r.Context(), result.QueryID); err != nil {
         http.Error(w, "initData already used", 403)
         return
@@ -1249,7 +1272,7 @@ func (h *Handler) LoginNexlink(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-### 12.2. Replay prevention (query_id tracking)
+### 15.2. Replay prevention (query_id tracking)
 
 Within the `auth_date` validity window (default 24h), a captured initData string can be replayed against any endpoint. The `query_id` field in initData is unique per WebView session and should be tracked to prevent reuse.
 
@@ -1281,11 +1304,11 @@ func (h *Handler) checkReplay(ctx context.Context, queryID string) error {
 
 ---
 
-## 13. Endpoint: `POST /user/bind-nexlink`
+## 16. Endpoint: `POST /user/bind-nexlink`
 
 Links a Nexlink identity to an existing danbao account (Method 4, Option A).
 
-### 13.1. Handler
+### 16.1. Handler
 
 ```go
 // POST /api/v1/user/bind-nexlink
@@ -1297,7 +1320,7 @@ func (h *Handler) BindNexlink(w http.ResponseWriter, r *http.Request) {
     }
     json.NewDecoder(r.Body).Decode(&req)
 
-    // 1. Rate limit — prevent brute-forcing passwords (see Section 13.2)
+    // 1. Rate limit — prevent brute-forcing passwords (see Section 16.2)
     key := "bind:" + sha256Hex(req.InitData)
     if !h.rateLimiter.Allow(key, 5, 10*time.Minute) {
         http.Error(w, "too many attempts, try again later", 429)
@@ -1311,7 +1334,7 @@ func (h *Handler) BindNexlink(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // 3. Replay prevention (see Section 12.2)
+    // 3. Replay prevention (see Section 15.2)
     if err := h.checkReplay(r.Context(), result.QueryID); err != nil {
         http.Error(w, "initData already used", 403)
         return
@@ -1363,7 +1386,7 @@ func (h *Handler) BindNexlink(w http.ResponseWriter, r *http.Request) {
 | `email` | `john@mail.com` | `john@mail.com` |
 | `nexlink_user_id` | **NULL** | **12345** |
 
-### 13.2. Brute-force protection
+### 16.2. Brute-force protection
 
 This endpoint accepts username + password + initData. An attacker with valid initData could attempt password brute-forcing.
 
@@ -1376,11 +1399,11 @@ This endpoint accepts username + password + initData. An attacker with valid ini
 
 ---
 
-## 14. Endpoint: `POST /user/create-nexlink`
+## 17. Endpoint: `POST /user/create-nexlink`
 
 Creates a new passwordless account from a Nexlink identity (Method 4, Option B).
 
-### 14.1. Handler
+### 17.1. Handler
 
 ```go
 // POST /api/v1/user/create-nexlink
@@ -1397,20 +1420,20 @@ func (h *Handler) CreateNexlink(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // 2. Replay prevention — blocks stolen initData reuse (see Section 12.2)
+    // 2. Replay prevention — blocks stolen initData reuse (see Section 15.2)
     if err := h.checkReplay(r.Context(), result.QueryID); err != nil {
         http.Error(w, "initData already used", 403)
         return
     }
 
-    // 3. Rate limit per Nexlink user ID (see Section 14.3)
+    // 3. Rate limit per Nexlink user ID (see Section 17.3)
     key := fmt.Sprintf("create-nexlink:%d", result.User.ID)
     if !h.rateLimiter.Allow(key, 3, 10*time.Minute) {
         http.Error(w, "too many attempts", 429)
         return
     }
 
-    // 4. Create passwordless user (ON CONFLICT handles race condition, see Section 14.2)
+    // 4. Create passwordless user (ON CONFLICT handles race condition, see Section 17.2)
     user, err := h.userService.CreateNexlinkUser(r.Context(), result.User.ID, result.User.Nickname, result.User.Avatar)
     if err != nil {
         // ON CONFLICT returned no rows — user already exists, fall back to login
@@ -1441,27 +1464,27 @@ func (h *Handler) CreateNexlink(w http.ResponseWriter, r *http.Request) {
 
 **Key point:** After initData verification, danbao issues its own OAuth2 token. The rest of the danbao system (middleware, refresh, revocation) works unchanged. The initData is only the **entry point** — it replaces the username/password step but everything downstream stays the same.
 
-### 14.2. Race condition protection (ON CONFLICT)
+### 17.2. Race condition protection (ON CONFLICT)
 
-Concurrent requests with the same initData (e.g., user double-clicks) are handled by `ON CONFLICT (nexlink_user_id) DO NOTHING` in the SQL (see Section 11). If `RETURNING` returns no rows, the user already exists — fall back to `FindByNexlinkUserID` and issue a token for the existing account.
+Concurrent requests with the same initData (e.g., user double-clicks) are handled by `ON CONFLICT (nexlink_user_id) DO NOTHING` in the SQL (see Section 14). If `RETURNING` returns no rows, the user already exists — fall back to `FindByNexlinkUserID` and issue a token for the existing account.
 
-### 14.3. Abuse prevention
+### 17.3. Abuse prevention
 
-This endpoint accepts only initData — no password, no CAPTCHA. An attacker with stolen initData could create an account as the victim. The replay check (Section 12.2) is the primary defense. Rate limiting adds a secondary layer.
+This endpoint accepts only initData — no password, no CAPTCHA. An attacker with stolen initData could create an account as the victim. The replay check (Section 15.2) is the primary defense. Rate limiting adds a secondary layer.
 
 | Protection | What it prevents |
 |---|---|
 | Replay check (`query_id`) | Stolen initData reuse — attacker can't create account with someone else's identity |
 | Rate limit per `nexlink_user_id` | 3 create attempts per user per 10 min |
-| `ON CONFLICT` (Section 14.2) | Race condition from double-click |
+| `ON CONFLICT` (Section 17.2) | Race condition from double-click |
 
 ---
 
-## 15. Endpoint: `POST /user/unbind-nexlink`
+## 18. Endpoint: `POST /user/unbind-nexlink`
 
 Disconnects a Nexlink identity from a danbao account. If a user's Nexlink account is compromised, this prevents the attacker from using `login-nexlink` to access the danbao account.
 
-### 15.1. Handler
+### 18.1. Handler
 
 ```go
 // POST /api/v1/user/unbind-nexlink
@@ -1508,7 +1531,7 @@ func (h *Handler) UnbindNexlink(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-### 15.2. Rules
+### 18.2. Rules
 
 | Rule | Reason |
 |---|---|
@@ -1520,7 +1543,7 @@ func (h *Handler) UnbindNexlink(w http.ResponseWriter, r *http.Request) {
 
 ---
 
-## 16. Password Login (nullable password_hash)
+## 19. Password Login (nullable password_hash)
 
 After the migration, `password_hash` is nullable. The existing `Authenticate` method must reject users with no password:
 
@@ -1545,7 +1568,7 @@ func (s *Service) Authenticate(ctx context.Context, username, password string) (
 
 ---
 
-## 17. Frontend Changes (danbao-web)
+## 20. Frontend Changes (danbao-web)
 
 ```js
 // danbao-web login page — handles all 4 methods
@@ -1603,11 +1626,11 @@ async function createNexlinkAccount(initData) {
 
 ---
 
-## 18. Registration Flow
+## 21. Registration Flow
 
 Registration is **not a separate flow** — it happens during the first login attempt, depending on which method the user chooses.
 
-### 18.1. Method 1: Form registration (general browser)
+### 21.1. Method 1: Form registration (general browser)
 
 User visits danbao-web in a regular browser (no `window.NexlinkApp`) and fills a traditional register form:
 
@@ -1622,17 +1645,17 @@ User visits danbao-web in a regular browser (no `window.NexlinkApp`) and fills a
 └─────────────────────────────┘
 ```
 
-The account is created with `nexlink_user_id = NULL`. The user can later bind their Nexlink identity when they log in via QR code or in-app — the authorization popup (Section 10, Method 4) handles binding.
+The account is created with `nexlink_user_id = NULL`. The user can later bind their Nexlink identity when they log in via QR code or in-app — the authorization popup (Section 13, Method 4) handles binding.
 
-### 18.2. Methods 2 & 3: QR code scan or dApp browser login
+### 21.2. Methods 2 & 3: QR code scan or dApp browser login
 
-When initData arrives for a `nexlink_user_id` that doesn't exist in the database, the `POST /user/login-nexlink` endpoint returns `{ status: "unbound" }`. The frontend shows the authorization popup (Section 10, Method 4).
+When initData arrives for a `nexlink_user_id` that doesn't exist in the database, the `POST /user/login-nexlink` endpoint returns `{ status: "unbound" }`. The frontend shows the authorization popup (Section 13, Method 4).
 
 If the user chooses **"Create a new account"** → `POST /user/create-nexlink` creates a passwordless account with `nexlink_user_id` set. This is the registration step — no form required.
 
 If the user chooses **"I have an existing account"** → `POST /user/bind-nexlink` links the Nexlink identity to the existing account. No new registration occurs.
 
-### 18.3. Account completion
+### 21.3. Account completion
 
 | Entry path | What's missing | How to complete |
 |---|---|---|
@@ -1642,7 +1665,7 @@ If the user chooses **"I have an existing account"** → `POST /user/bind-nexlin
 
 Once both sides are filled in, the account has full access from both contexts (Nexlink app + general browser).
 
-### 18.4. Nexlink Platform Registration (prerequisite)
+### 21.4. Nexlink Platform Registration (prerequisite)
 
 Users must have a Nexlink account before using any dApp. The native app registration flow:
 
@@ -1659,7 +1682,7 @@ Phone/Email input → Verification code → Set password → Set profile → Don
 
 ---
 
-## 19. Code Locations
+## 22. Code Locations
 
 | Component | File |
 |---|---|
@@ -1678,13 +1701,13 @@ Phone/Email input → Verification code → Set password → Set profile → Don
 
 ---
 
-# Part III: Security & Operations
+# Part IV: Security & Operations
 
 ---
 
-## 20. Security Model
+## 23. Security Model
 
-This section covers the overall trust model and threat mitigations. Endpoint-specific security measures (rate limiting, replay prevention, brute-force protection) are documented inline with each endpoint in Part II.
+This section covers the overall trust model and threat mitigations. Endpoint-specific security measures (rate limiting, replay prevention, brute-force protection) are documented inline with each endpoint in Part III.
 
 ### Trust boundaries
 
@@ -1716,15 +1739,15 @@ flowchart LR
 |---|---|
 | dApp JS steals user's master token | Master token never enters WebView |
 | dApp JS forges user identity | Cannot generate HMAC hash without secret |
-| Replay attack (reuse old initData) | `auth_date` expiry (24h server-enforced), `query_id` tracking (Section 12.2) |
+| Replay attack (reuse old initData) | `auth_date` expiry (24h server-enforced), `query_id` tracking (Section 15.2) |
 | Cross-dApp impersonation | Each dApp has its own HMAC secret |
 | Stale cached initData | Cache TTLs: 30min fresh, 24h max usable, background refresh |
 | QR code replay | One-time token, expires in 2-5 minutes |
 | QR code interception | Token is useless without Nexlink app confirmation |
 | Man-in-the-middle | All endpoints require HTTPS/TLS |
-| Bind endpoint brute-force | Rate limiting + account lockout (Section 13.2) |
-| Create endpoint abuse | Replay prevention + rate limiting (Section 14.3) |
-| Compromised Nexlink account | Unbind flow with session revocation (Section 15) |
+| Bind endpoint brute-force | Rate limiting + account lockout (Section 16.2) |
+| Create endpoint abuse | Replay prevention + rate limiting (Section 17.3) |
+| Compromised Nexlink account | Unbind flow with session revocation (Section 18) |
 
 ### QR login specific security
 
@@ -1736,13 +1759,13 @@ flowchart LR
 
 ---
 
-## 21. Performance & Scalability
+## 24. Performance & Scalability
 
 These optimizations are not required for initial deployment but should be considered as traffic grows.
 
 ### Profile sync optimization
 
-The returning-user login syncs `display_name` and `avatar_url` on every login. At scale, skip the write if values haven't changed (already integrated into Section 12 handler):
+The returning-user login syncs `display_name` and `avatar_url` on every login. At scale, skip the write if values haven't changed (already integrated into Section 15 handler):
 
 ```go
 if e.DisplayName != nickname || e.AvatarURL != avatar {
@@ -1813,11 +1836,11 @@ h.redis.Publish(ctx, "qr:"+token, "confirmed")
 
 ---
 
-# Part IV: Implementation Status
+# Part V: Implementation Status
 
 ---
 
-## 22. Implementation Checklist
+## 25. Implementation Checklist
 
 ### Already implemented
 
@@ -1834,33 +1857,33 @@ h.redis.Publish(ctx, "qr:"+token, "confirmed")
 - [x] Danbao OAuth2 server (password, refresh_token, authorization_code grants)
 - [x] Danbao user/admin login endpoints
 
-### To be implemented: Danbao endpoints (Part II)
+### To be implemented: Danbao endpoints (Part III)
 
-- [ ] DB migration `000018_nexlink_user_binding.sql` — add `nexlink_user_id` column; make `password_hash` and `email` nullable (Section 9)
+- [ ] DB migration `000018_nexlink_user_binding.sql` — add `nexlink_user_id` column; make `password_hash` and `email` nullable (Section 12)
 - [ ] Update `Entity` struct — add `NexlinkUserID` field
-- [ ] `FindByNexlinkUserID` query — lookup by `nexlink_user_id` (Section 11)
-- [ ] `CreateNexlinkUser` query — insert with `ON CONFLICT`, without password/email (Section 11)
-- [ ] `SetNexlinkUserID` repo method — bind Nexlink ID to existing account (Section 11)
-- [ ] `ClearNexlinkUserID` repo method — remove Nexlink binding (Section 11)
-- [ ] `RevokeAllTokens` OAuth2 method — delete all tokens for a user ID (Section 15)
-- [ ] `POST /user/login-nexlink` — verify initData, return `"ok"` or `"unbound"` (Section 12)
-- [ ] `POST /user/bind-nexlink` — verify initData + password, bind to existing account (Section 13)
-- [ ] `POST /user/create-nexlink` — verify initData, create passwordless account (Section 14)
-- [ ] `POST /user/unbind-nexlink` — disconnect Nexlink identity, revoke sessions (Section 15)
+- [ ] `FindByNexlinkUserID` query — lookup by `nexlink_user_id` (Section 14)
+- [ ] `CreateNexlinkUser` query — insert with `ON CONFLICT`, without password/email (Section 14)
+- [ ] `SetNexlinkUserID` repo method — bind Nexlink ID to existing account (Section 14)
+- [ ] `ClearNexlinkUserID` repo method — remove Nexlink binding (Section 14)
+- [ ] `RevokeAllTokens` OAuth2 method — delete all tokens for a user ID (Section 18)
+- [ ] `POST /user/login-nexlink` — verify initData, return `"ok"` or `"unbound"` (Section 15)
+- [ ] `POST /user/bind-nexlink` — verify initData + password, bind to existing account (Section 16)
+- [ ] `POST /user/create-nexlink` — verify initData, create passwordless account (Section 17)
+- [ ] `POST /user/unbind-nexlink` — disconnect Nexlink identity, revoke sessions (Section 18)
 - [ ] `POST /user/set-password` — let initData-created users set username/password/email
-- [ ] Guard `Authenticate` for NULL password_hash — reject passwordless users on password login (Section 16)
-- [ ] Reject `nx_` prefix in `POST /user/register` — reserved for auto-generated usernames (Section 10)
-- [ ] Dual-mode login page — detect `window.NexlinkApp`, auto-login with initData or show form/QR (Section 17)
-- [ ] Authorization popup UI — show "Bind existing account" / "Create new account" (Section 17)
-- [ ] Set password UI — settings page for initData-created users (Section 17)
-- [ ] Unbind UI — settings page button to disconnect Nexlink identity (Section 15)
+- [ ] Guard `Authenticate` for NULL password_hash — reject passwordless users on password login (Section 19)
+- [ ] Reject `nx_` prefix in `POST /user/register` — reserved for auto-generated usernames (Section 13)
+- [ ] Dual-mode login page — detect `window.NexlinkApp`, auto-login with initData or show form/QR (Section 20)
+- [ ] Authorization popup UI — show "Bind existing account" / "Create new account" (Section 20)
+- [ ] Set password UI — settings page for initData-created users (Section 20)
+- [ ] Unbind UI — settings page button to disconnect Nexlink identity (Section 18)
 
-### To be implemented: Security hardening (Part II, Part III)
+### To be implemented: Security hardening (Part III, Part IV)
 
-- [ ] initData replay prevention — track `query_id` in Redis, reject reused initData (Section 12.2)
-- [ ] Rate limiter on `POST /user/bind-nexlink` — 5 attempts per initData per 10 min + per-IP limit (Section 13.2)
-- [ ] Rate limiter on `POST /user/create-nexlink` — 3 attempts per `nexlink_user_id` per 10 min (Section 14.3)
-- [ ] Account lockout — lock after 10 failed bind attempts; require admin/email reset (Section 13.2)
+- [ ] initData replay prevention — track `query_id` in Redis, reject reused initData (Section 15.2)
+- [ ] Rate limiter on `POST /user/bind-nexlink` — 5 attempts per initData per 10 min + per-IP limit (Section 16.2)
+- [ ] Rate limiter on `POST /user/create-nexlink` — 3 attempts per `nexlink_user_id` per 10 min (Section 17.3)
+- [ ] Account lockout — lock after 10 failed bind attempts; require admin/email reset (Section 16.2)
 
 ### To be implemented: QR login (Part I, Section 3)
 
@@ -1880,7 +1903,7 @@ h.redis.Publish(ctx, "qr:"+token, "confirmed")
 - [ ] Nexlink backend: Widget CSS — branded, scoped styles with light/dark theme support
 - [ ] Nexlink backend: Static asset serving — serve widget JS from `/static/nexlink-login-widget.js` with cache headers and SRI hash
 
-### To be implemented: Scalability (Part III, Section 21)
+### To be implemented: Scalability (Part IV, Section 24)
 
 - [ ] Redis pub/sub for QR status — replace ticker-based polling with `SUBSCRIBE qr:{token}` channel
 - [ ] SSE endpoint for QR status — upgrade to Server-Sent Events
@@ -1895,7 +1918,7 @@ h.redis.Publish(ctx, "qr:"+token, "confirmed")
 
 ---
 
-## 23. References
+## 26. References
 
 - [Nexlink Mini App Spec](../docs/NEXLINK_MINIAPP_SPEC.md) — full JS SDK and API specification
 - [Nexlink Architecture](../docs/architecture-README.md) — app versioning and upgrade system
