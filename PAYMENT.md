@@ -552,5 +552,5 @@ flowchart LR
 ### Documentation
 
 - [x] PAYMENT.md — this document
-- [ ] API.md — add payment types and endpoints
-- [ ] SUMMARY.md — add Payment Integration link
+- [x] API.md — add payment types and endpoints
+- [x] SUMMARY.md — add Payment Integration link

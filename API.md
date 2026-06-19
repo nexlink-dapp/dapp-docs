@@ -183,6 +183,40 @@ Payload delivered to the dApp's `callbackUrl` when an order is paid.
 
 ---
 
+### ContractCallResult
+
+Return value from `NexlinkApp.contract.call()` (in-app JS SDK).
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | String | `"sent"`, `"cancelled"`, or `"failed"` |
+| `txHash` | String | _Optional._ Transaction hash. Present when `status` is `"sent"`. |
+| `error` | String | _Optional._ Error message. Present when `status` is `"failed"`. |
+
+---
+
+### ContractSession
+
+Represents a QR contract call session created by [POST /dapp/contract/create](#post-dappcontractcreate). Used for browser-based contract interaction via QR code.
+
+| Field | Type | Description |
+|---|---|---|
+| `sessionToken` | String | One-time contract session token (UUID) |
+| `expiresAt` | Integer | Unix timestamp when this session expires (5 minutes from creation) |
+
+---
+
+### ContractStatus
+
+Response from [GET /dapp/contract/status](#get-dappcontractstatus).
+
+| Field | Type | Description |
+|---|---|---|
+| `status` | String | `"pending"`, `"sent"`, or `"expired"` |
+| `txHash` | String | _Optional._ Transaction hash. Present when `status` is `"sent"`. |
+
+---
+
 ## Signature Verification
 
 dApp backends must verify the `hash` field in [InitData](#initdata) before trusting the payload.
@@ -678,6 +712,162 @@ Expired:
 
 ---
 
+## Contract API
+
+These endpoints handle QR-based contract call sessions for external browsers. For architecture details, see [Contract Interaction](CONTRACT.md).
+
+**Base URL:** `https://nexlink-api` (same as Nexlink Platform API)
+
+---
+
+### POST /dapp/contract/create
+
+Creates a new contract call session for QR-based interaction. The dApp backend calls this when a user needs to sign a contract call from an external browser. Returns a [ContractSession](#contractsession) on success.
+
+**Authorization:** `Bearer <dapp_api_key>`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `contract` | String | Yes | Target contract address (hex, checksummed) |
+| `data` | String | Yes | ABI-encoded calldata (hex, `0x`-prefixed) |
+| `value` | String | No | Native token value in wei (default `"0"`) |
+| `methodName` | String | No | Human-readable method name for display (e.g., `"freeze"`) |
+| `clientId` | Integer | Yes | dApp numeric ID |
+
+**Returns:** [ContractSession](#contractsession)
+
+```json
+{
+  "sessionToken": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "expiresAt": 1718700300
+}
+```
+
+The dApp backend encodes the token into a deep link for the QR code:
+
+```
+nexlink://contract?token=<sessionToken>&dapp=<clientId>
+```
+
+> The QR code contains **no contract address, no calldata, no value** — only the token and dApp ID.
+
+**Errors:**
+
+| HTTP Status | Description |
+|---|---|
+| 401 | Invalid or missing API key |
+| 400 | Invalid contract address or calldata |
+
+---
+
+### GET /dapp/contract/info
+
+Fetches contract call details for a scanned QR code. Called by the **NexLink mobile app** after the user scans a contract call QR.
+
+**Authorization:** `Bearer <user's nexlinkToken>`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `token` | String | Yes | Contract session token (query parameter) |
+
+**Returns:**
+
+```json
+{
+  "contract": "0x3d8b4425...",
+  "data": "0x57e871e7...",
+  "value": "0",
+  "methodName": "freeze",
+  "dappName": "Danbao",
+  "dappIcon": "https://cdn.nexlink.app/dapp/danbao.png",
+  "expiresAt": 1718700300
+}
+```
+
+**Errors:**
+
+| HTTP Status | Description |
+|---|---|
+| 400 | Token expired or invalid |
+| 401 | User not authenticated |
+| 404 | Contract session not found |
+
+---
+
+### POST /dapp/contract/confirm
+
+Called by the **NexLink mobile app** after the user confirms a QR contract call and the on-chain transaction is broadcast. The backend stores the result for polling via [GET /dapp/contract/status](#get-dappcontractstatus).
+
+**Authorization:** `Bearer <user's nexlinkToken>`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `sessionToken` | String | Yes | Contract session token |
+| `txHash` | String | Yes | On-chain transaction hash |
+
+**Returns:**
+
+```json
+{ "errCode": 0 }
+```
+
+**Errors:**
+
+| HTTP Status | Description |
+|---|---|
+| 400 | Token expired or already used |
+| 401 | User not authenticated |
+
+**Side effects:**
+- Stores `txHash` with session for status polling
+- Transitions session to `sent` status
+
+---
+
+### GET /dapp/contract/status
+
+Polls for QR contract call result. Supports **long polling** — the server holds the connection for up to 25 seconds, returning immediately when the status changes. Returns a [ContractStatus](#contractstatus) object.
+
+**Authorization:** `Bearer <dapp_api_key>`
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `token` | String | Yes | Contract session token (query parameter) |
+| `clientId` | Integer | Yes | dApp numeric ID (query parameter) |
+
+**Returns:** [ContractStatus](#contractstatus)
+
+Pending (server held ~25s, then returned):
+
+```json
+{ "status": "pending" }
+```
+
+Sent (includes transaction hash):
+
+```json
+{
+  "status": "sent",
+  "txHash": "0xabc123..."
+}
+```
+
+Expired:
+
+```json
+{ "status": "expired" }
+```
+
+| Status | Meaning | dApp Action |
+|---|---|---|
+| `pending` | User has not scanned or confirmed yet | Reconnect immediately |
+| `sent` | User confirmed — transaction broadcast | Update UI, process result |
+| `expired` | Session TTL exceeded | Show "QR expired", offer refresh |
+
+> **One-time read:** After returning `sent`, the server deletes the stored result. A second request returns `expired`.
+
+---
+
 ## JS SDK — Payment Methods
 
 These methods are available on `window.NexlinkApp.payment` inside the NexLink dApp browser. They are **not available** in external browsers.
@@ -754,6 +944,97 @@ const status = await NexlinkApp.payment.getOrderStatus({
 |---|---|---|
 | `status` | String | `"pending"`, `"paid"`, `"cancelled"`, or `"expired"` |
 | `txHash` | String | _Optional._ Transaction hash. Present when `status` is `"paid"`. |
+
+---
+
+## JS SDK — Contract Methods
+
+These methods are available on `window.NexlinkApp.contract` inside the NexLink dApp browser. They are **not available** in external browsers — use the [QR contract flow](#contract-api) instead.
+
+For detection:
+
+```javascript
+if (window.NexlinkApp && NexlinkApp.contract) {
+  // In-app: contract SDK available
+} else if (window.ethereum) {
+  // EIP-1193 fallback (Layer 1)
+} else {
+  // External browser: use QR contract flow
+}
+```
+
+---
+
+### NexlinkApp.contract.call
+
+Sends a state-changing transaction to a smart contract. The SDK encodes calldata from the ABI, and the NexLink app shows a decoded confirmation UI. Returns a [ContractCallResult](#contractcallresult).
+
+```javascript
+const result = await NexlinkApp.contract.call({
+  contract: "0x3d8b4425...",
+  abi: ESCROW_ABI,
+  method: "freeze",
+  args: [orderId, 10000000, USDK_ADDRESS],
+  value: "0"
+});
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `contract` | String | Yes | Contract address (hex, checksummed) |
+| `abi` | Array | Yes | ABI array (standard Solidity ABI JSON or human-readable) |
+| `method` | String | Yes | Function name (e.g., `"freeze"`) |
+| `args` | Array | Yes | Function arguments in order |
+| `value` | String | No | Native token value in wei (default `"0"`) |
+
+**Returns:** [ContractCallResult](#contractcallresult)
+
+---
+
+### NexlinkApp.contract.read
+
+Calls a `view` or `pure` function on a smart contract. No signing required, no confirmation UI, no gas cost. Returns the decoded return value.
+
+```javascript
+const status = await NexlinkApp.contract.read({
+  contract: "0x3d8b4425...",
+  abi: ESCROW_ABI,
+  method: "getOrderStatus",
+  args: [orderId]
+});
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `contract` | String | Yes | Contract address (hex, checksummed) |
+| `abi` | Array | Yes | ABI array |
+| `method` | String | Yes | Function name (must be `view` or `pure`) |
+| `args` | Array | Yes | Function arguments in order |
+
+**Returns:** Decoded value(s) according to the ABI output specification. Single return values are returned directly; multiple values are returned as an array.
+
+---
+
+### NexlinkApp.contract.encode
+
+Encodes ABI calldata without sending a transaction. Useful for building calldata manually for use with `NexlinkApp.wallet.sendTransaction()` or for debugging.
+
+```javascript
+const calldata = NexlinkApp.contract.encode({
+  abi: ESCROW_ABI,
+  method: "freeze",
+  args: [orderId, 10000000, USDK_ADDRESS]
+});
+// "0x57e871e7000000000000000000000000..."
+```
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `abi` | Array | Yes | ABI array |
+| `method` | String | Yes | Function name |
+| `args` | Array | Yes | Function arguments in order |
+
+**Returns:** `String` — hex-encoded calldata prefixed with `0x`.
 
 ---
 

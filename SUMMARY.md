@@ -4,3 +4,4 @@
 * [API Reference](API.md)
 * [Login & Registration](AUTH.md)
 * [Payment Integration](PAYMENT.md)
+* [Contract Interaction](CONTRACT.md)
