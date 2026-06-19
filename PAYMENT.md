@@ -10,10 +10,10 @@ For endpoint specifications, see [API Reference](API.md#payment-api). For authen
 
 ### Two Payment Modes
 
-| Mode | Pattern | Use case | Backend order? | Webhook? | Browser support? |
-|---|---|---|---|---|---|
-| **Direct transfer** | imToken `eth_sendTransaction` | P2P tips, donations, simple transfers | No | No | In-app only |
-| **Order-based payment** | Telegram `openInvoice` | Commerce, subscriptions, checkout | Yes | Yes | In-app + browser QR |
+| Mode | Use case | Backend order? | Webhook? | Browser support? |
+|---|---|---|---|---|
+| **Direct transfer** | P2P tips, donations, simple transfers | No | No | In-app only |
+| **Order-based payment** | Commerce, subscriptions, checkout | Yes | Yes | In-app + browser QR |
 
 **Choose direct transfer** when the dApp frontend knows the recipient and amount and no server-side confirmation is needed.
 
@@ -31,7 +31,7 @@ flowchart LR
     D --> E[Result returned<br/>to dApp]
 ```
 
-This is the same **delegated authorization** pattern used by Apple Pay, Google Pay, Telegram Mini App payments, and imToken — the sandboxed app describes *what* it wants, the trusted host handles *how* to authorize it.
+The dApp describes *what* it wants to pay, the NexLink app handles authorization through its native UI, and the result flows back to the dApp.
 
 ---
 
