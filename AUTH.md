@@ -2,6 +2,21 @@
 
 Users open a dApp inside the Nexlink native app (or scan a QR code from an external browser), and the platform provides a cryptographically signed identity payload — no username/password form required.
 
+## How to Read This Document
+
+This document serves two audiences:
+
+| Audience | What to read |
+|---|---|
+| **Any dApp developer** integrating Nexlink login | **Part I** (Sections 1-7): login flows, signature verification, QR deep links, embeddable widget |
+| **Danbao team** adding Nexlink to the existing OAuth2 app | Skim Part I for context, then focus on **Part II** (Sections 8-19): migration, endpoints, frontend |
+
+**Part III** (Security & Scalability) is relevant for production deployment regardless of audience. **Part IV** tracks implementation status.
+
+---
+
+# Part I: dApp Developer Guide
+
 ---
 
 ## 1. Authentication Architecture
@@ -280,7 +295,7 @@ Authorization: Bearer <dapp_api_key>
 On `confirmed`, the dApp backend:
 
 1. **Verifies initData** signature (Mode A with local secret, or trust it since it came from Nexlink API over authenticated channel).
-2. **Finds or creates user** (`FindOrCreateByNexlinkID`).
+2. **Looks up user** by `nexlink_user_id`. If not found, returns `"unbound"` — the dApp handles binding or account creation (see Section 10 for danbao's implementation, or implement your own).
 3. **Issues its own session token** (OAuth2 token, JWT, etc.).
 4. Returns the session token to the browser (via the browser's poll to `/api/auth/qr/status`).
 
@@ -361,658 +376,11 @@ func (h *Handler) QrStatus(w http.ResponseWriter, r *http.Request) {
 
 ---
 
-## 4. Danbao Integration (Existing OAuth2 + Nexlink initData)
+## 4. initData Signature Verification
 
-Danbao (`danbao/`) has its **own independent auth system** that predates the Nexlink dApp browser. To work as a Nexlink dApp, danbao must support both auth paths.
+After receiving initData from either login flow, your backend must verify the HMAC-SHA256 signature before trusting the payload. There are two modes: local verification (recommended) and remote verification via the Nexlink API.
 
-### 4.1. Danbao's current auth (standalone)
-
-Danbao uses a full OAuth2 server (`danbao-api/pkg/oauth2server/`):
-
-- **Grant types:** `password`, `refresh_token`, `authorization_code`
-- **Token type:** Opaque 256-bit bearer tokens (not JWT), stored in PostgreSQL
-- **TTLs:** Access tokens 2h, refresh tokens 7d
-- **User login:** `POST /api/v1/user/login` with `{ username, password }` → returns `{ access_token, refresh_token }`
-- **Admin login:** `POST /api/v1/admin/login` — same flow but validates `is_admin` flag and scope `"admin"`
-- **Middleware:** Bearer token validated on every request, user ID threaded into request context
-- **Frontend (danbao-web):** Stores token in localStorage, `Authorization: Bearer <token>` on every request
-- **Frontend (danbao-admin):** Same pattern, additionally re-checks `is_admin` on each `check()` call
-
-### 4.2. Database migration: add Nexlink binding column
-
-The current `users` table has **no column to store a Nexlink user ID**, and `password_hash` / `email` are `NOT NULL` — blocking auto-creation from initData.
-
-**Current schema constraints that block initData users:**
-
-| Column | Constraint | Problem |
-|---|---|---|
-| `password_hash` | `VARCHAR(255) NOT NULL` | initData users have no password |
-| `email` | `VARCHAR(255) NOT NULL` | initData doesn't include email |
-| `username` | `VARCHAR(64) NOT NULL UNIQUE` | Need to generate one from Nexlink identity |
-| (missing) | — | No column to store `nexlink_user_id` |
-
-**Required migration:**
-
-```sql
--- File: danbao-api/internal/db/migrations/000018_nexlink_user_binding.sql
-
--- 1. Add Nexlink binding column (nullable — existing users won't have it)
-ALTER TABLE users
-  ADD COLUMN nexlink_user_id BIGINT;
-
--- Unique constraint: one Nexlink user → one danbao user
-CREATE UNIQUE INDEX users_nexlink_user_id_uniq
-  ON users(nexlink_user_id) WHERE nexlink_user_id IS NOT NULL;
-
--- 2. Allow passwordless users (initData-created accounts)
-ALTER TABLE users
-  ALTER COLUMN password_hash DROP NOT NULL;
-
--- 3. Allow email-less users (initData doesn't provide email)
-ALTER TABLE users
-  ALTER COLUMN email DROP NOT NULL;
-```
-
-**Updated user table after migration:**
-
-| Column | Type | Constraint | Notes |
-|---|---|---|---|
-| `id` | BIGSERIAL | PK | danbao internal ID |
-| `username` | VARCHAR(64) | NOT NULL UNIQUE | Generated as `"nx_{nexlink_user_id}"` for initData users |
-| `password_hash` | VARCHAR(255) | **NULLABLE** | NULL for initData-only users |
-| `email` | VARCHAR(255) | **NULLABLE** | NULL for initData-only users |
-| `nexlink_user_id` | BIGINT | UNIQUE (nullable) | **NEW** — Nexlink numeric user ID |
-| `display_name` | VARCHAR(64) | nullable | Synced from initData `nickname` |
-| `avatar_url` | VARCHAR(512) | nullable | Synced from initData `avatar` |
-| ... | | | (other columns unchanged) |
-
-### 4.3. Four login methods — one account
-
-Every danbao user ends up with **one account** regardless of how they first arrive. The four entry methods are:
-
-| # | Method | Context | Nexlink account required? |
-|---|---|---|---|
-| 1 | **Form registration** | General browser | No |
-| 2 | **QR code scan** | General browser + Nexlink app | Yes |
-| 3 | **dApp browser login** | Inside Nexlink app | Yes (automatic) |
-| 4 | **Browser authorization popup** | General browser (after initData arrives) | Yes |
-
-All Nexlink-based methods (2, 3, 4) deliver the same `initData` payload to the dApp backend. The backend handles them identically: verify signature → look up `nexlink_user_id` → respond.
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                                                                  │
-│  Method 1: Form registration (no Nexlink needed)                 │
-│  ───────────────────────────────────────────────                 │
-│  User visits danbao-web → fills register form                    │
-│  → account created with username, password, email                │
-│  → nexlink_user_id = NULL                                        │
-│  → user can later bind Nexlink via Method 4                      │
-│                                                                  │
-│  Method 2: QR code scan login (general browser)                  │
-│  ──────────────────────────────────────────────                  │
-│  User visits danbao-web in Chrome/Safari                         │
-│  → site shows QR code (or Nexlink Login Widget)                  │
-│  → user scans with Nexlink app → confirms                        │
-│  → Nexlink backend delivers initData to dApp backend             │
-│  → backend verifies → checks nexlink_user_id binding             │
-│                                                                  │
-│  Method 3: dApp browser login (inside Nexlink app)               │
-│  ─────────────────────────────────────────────────               │
-│  User opens danbao inside Nexlink app                            │
-│  → initData auto-injected by SDK                                 │
-│  → frontend sends initData to dApp backend                       │
-│  → backend verifies → checks nexlink_user_id binding             │
-│                                                                  │
-│  Method 4: Browser authorization popup                           │
-│  ────────────────────────────────────────                        │
-│  After Method 2 or 3 delivers initData for an UNBOUND user:     │
-│  → backend returns { status: "unbound", nexlinkUser }            │
-│  → browser shows popup: "Bind existing account or create new?"   │
-│  → user chooses to bind (enter password) or create fresh         │
-│                                                                  │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-#### Method 1: Form registration
-
-Standard registration — no Nexlink identity involved.
-
-```
-POST /api/v1/user/register
-{ "username": "john_doe", "password": "...", "email": "john@mail.com" }
-    │
-    ▼
-INSERT INTO users (
-  username,        -- "john_doe"
-  password_hash,   -- bcrypt("password")
-  email,           -- "john@mail.com"
-  nexlink_user_id  -- NULL (not bound)
-)
-    │
-    ▼
-Issue OAuth2 token → user is logged in
-```
-
-The user logs in later with `POST /user/login { username, password }` as usual.
-
-#### Methods 2 & 3: Nexlink login (QR scan or in-app)
-
-Both methods deliver `initData` to the same backend endpoint. The backend does **not** auto-create an account when the `nexlink_user_id` is unknown — it returns `"unbound"` status so the frontend can show the authorization popup (Method 4).
-
-```
-initData arrives (via QR poll or in-app SDK)
-    │
-    ▼
-POST /api/v1/user/login-nexlink
-{ "initData": "user=%7B...%7D&hash=..." }
-    │
-    ▼
-Backend:
-  1. Verify initData signature → extract nexlink_user_id
-  2. SELECT * FROM users WHERE nexlink_user_id = 12345
-    │
-    ├── FOUND → already bound
-    │   → sync profile (display_name, avatar_url)
-    │   → issue OAuth2 token
-    │   → return { status: "ok", token, user }
-    │
-    └── NOT FOUND → unbound
-        → return { status: "unbound", nexlinkUser: { id, nickname, avatar } }
-```
-
-When the frontend receives `"ok"`, the user is logged in. When it receives `"unbound"`, it triggers the authorization popup (Method 4).
-
-#### Method 4: Browser authorization popup
-
-When initData arrives for an unknown `nexlink_user_id`, the frontend shows a popup:
-
-```
-┌──────────────────────────────────────────────┐
-│                                              │
-│  Welcome, John!                              │
-│  Your Nexlink account is not yet linked.     │
-│                                              │
-│  ┌────────────────────────────────────────┐  │
-│  │  I have an existing account            │  │
-│  │  (enter username + password to bind)   │  │
-│  └────────────────────────────────────────┘  │
-│                                              │
-│  ┌────────────────────────────────────────┐  │
-│  │  Create a new account                  │  │
-│  │  (auto-create from Nexlink identity)   │  │
-│  └────────────────────────────────────────┘  │
-│                                              │
-└──────────────────────────────────────────────┘
-```
-
-**Option A — Bind existing account:** User enters their danbao username and password.
-
-```
-POST /api/v1/user/bind-nexlink
-{
-  "username": "john_doe",
-  "password": "their_password",
-  "initData": "user=%7B...%7D&..."
-}
-    │
-    ▼
-Backend:
-  1. Verify initData signature → extract nexlink_user_id = 12345
-  2. Authenticate username/password → find user id=1
-  3. Check user.nexlink_user_id IS NULL (not already bound)
-  4. UPDATE users SET nexlink_user_id = 12345 WHERE id = 1
-  5. Issue OAuth2 token for the bound account
-```
-
-| Column | Before bind | After bind |
-|---|---|---|
-| `username` | `john_doe` | `john_doe` |
-| `password_hash` | `$2a$10$...` | `$2a$10$...` |
-| `email` | `john@mail.com` | `john@mail.com` |
-| `nexlink_user_id` | **NULL** | **12345** |
-
-**Option B — Create new account:** One-click, no form needed.
-
-```
-POST /api/v1/user/create-nexlink
-{
-  "initData": "user=%7B...%7D&..."
-}
-    │
-    ▼
-Backend:
-  1. Verify initData signature → extract nexlink_user_id = 12345
-  2. INSERT INTO users (
-       username,          -- "nx_12345" (generated)
-       password_hash,     -- NULL
-       email,             -- NULL
-       nexlink_user_id,   -- 12345
-       display_name,      -- "John"
-       avatar_url         -- from initData
-     )
-  3. Issue OAuth2 token → return to frontend
-```
-
-The user can later set a password via `POST /user/set-password` to enable form login.
-
-#### Returning user (already bound)
-
-Once an account has `nexlink_user_id` set, all subsequent Nexlink logins (QR or in-app) skip the popup:
-
-```
-initData.user.id = 12345
-    │
-    ▼
-SELECT * FROM users WHERE nexlink_user_id = 12345
-    → found: danbao user id=1
-    │
-    ▼
-UPDATE users SET
-  display_name = initData.nickname,   -- sync profile
-  avatar_url = initData.avatar,
-  last_login_at = NOW()
-WHERE nexlink_user_id = 12345
-    │
-    ▼
-Issue OAuth2 token → return { status: "ok", token, user }
-```
-
-#### Account completion
-
-| Entry path | What's missing | How to complete |
-|---|---|---|
-| Method 1 (form) | `nexlink_user_id` | Log in via QR or in-app → bind (Method 4, Option A) |
-| Method 2/3 → Option B (create new) | password, email, custom username | Settings → "Set password" (`POST /user/set-password`) |
-| Method 2/3 → Option A (bind existing) | Nothing — already complete | — |
-
-#### Why duplicates are impossible
-
-| Guard | How |
-|---|---|
-| `nexlink_user_id UNIQUE` constraint | DB rejects a second row with the same Nexlink user ID |
-| Option A bind checks `nexlink_user_id IS NULL` | Won't overwrite an already-bound account |
-| Option B checks `SELECT` before `INSERT` | Only creates if no match exists |
-| `"unbound"` response prevents silent auto-create | User must explicitly choose bind or create |
-
-### 4.4. Backend service methods
-
-```go
-// FindByNexlinkUserID looks up a danbao user by Nexlink ID.
-// Returns ErrNotFound if no account is bound.
-func (s *Service) FindByNexlinkUserID(ctx context.Context, nexlinkUserID int64) (UserResp, error) {
-    e, err := s.repo.FindByNexlinkUserID(ctx, nexlinkUserID)
-    if err != nil {
-        return UserResp{}, err
-    }
-    return toResp(e), nil
-}
-
-// CreateNexlinkUser creates a new passwordless user bound to a Nexlink identity.
-// Called when user chooses "Create new account" in the authorization popup.
-func (s *Service) CreateNexlinkUser(
-    ctx context.Context,
-    nexlinkUserID int64,
-    nickname string,
-    avatar string,
-) (UserResp, error) {
-    e, err := s.repo.CreateNexlinkUser(ctx, Entity{
-        Username:      fmt.Sprintf("nx_%d", nexlinkUserID),
-        NexlinkUserID: &nexlinkUserID,
-        DisplayName:   nickname,
-        AvatarURL:     avatar,
-        // password_hash = NULL, email = NULL
-    })
-    if err != nil {
-        return UserResp{}, err
-    }
-    return toResp(e), nil
-}
-
-// SetNexlinkUserID binds a Nexlink identity to an existing account.
-// Called when user chooses "Bind existing account" in the authorization popup.
-func (s *Service) SetNexlinkUserID(ctx context.Context, userID int64, nexlinkUserID int64) error {
-    return s.repo.SetNexlinkUserID(ctx, userID, nexlinkUserID)
-}
-
-// UpdateProfile syncs display name and avatar from initData.
-func (s *Service) UpdateProfile(ctx context.Context, userID int64, nickname, avatar string) error {
-    return s.repo.UpdateProfile(ctx, userID, nickname, avatar)
-}
-```
-
-```sql
--- name: FindByNexlinkUserID :one
-SELECT * FROM users WHERE nexlink_user_id = $1;
-
--- name: CreateNexlinkUser :one
-INSERT INTO users (
-  username, nexlink_user_id,
-  display_name, avatar_url
-) VALUES ($1, $2, $3, $4)
-RETURNING *;
-
--- name: SetNexlinkUserID :exec
-UPDATE users SET nexlink_user_id = $1 WHERE id = $2;
-```
-
-### 4.5. Login endpoint — returns `"unbound"` for unknown users
-
-```go
-// POST /api/v1/user/login-nexlink
-func (h *Handler) LoginNexlink(w http.ResponseWriter, r *http.Request) {
-    var req struct {
-        InitData string `json:"initData"`
-    }
-    json.NewDecoder(r.Body).Decode(&req)
-
-    // 1. Verify initData signature
-    result, err := VerifyNexlinkInitData(req.InitData, h.dappSecret)
-    if err != nil {
-        http.Error(w, "unauthorized", 401)
-        return
-    }
-
-    // 2. Look up existing bound user
-    user, err := h.userService.FindByNexlinkUserID(r.Context(), result.User.ID)
-    if errors.Is(err, ErrNotFound) {
-        // No account bound to this nexlink_user_id → tell frontend
-        json.NewEncoder(w).Encode(map[string]any{
-            "status": "unbound",
-            "nexlinkUser": map[string]any{
-                "id":       result.User.ID,
-                "nickname": result.User.Nickname,
-                "avatar":   result.User.Avatar,
-            },
-        })
-        return
-    }
-    if err != nil {
-        http.Error(w, "internal error", 500)
-        return
-    }
-
-    // 3. Sync profile from initData
-    _ = h.userService.UpdateProfile(r.Context(), user.ID, result.User.Nickname, result.User.Avatar)
-
-    // 4. Issue danbao OAuth2 token
-    token, err := h.oauth2.PasswordGrantInternal(user.ID, user.Username, "user")
-    if err != nil {
-        http.Error(w, "internal error", 500)
-        return
-    }
-
-    // 5. Return same response shape as /user/login
-    json.NewEncoder(w).Encode(map[string]any{
-        "status":        "ok",
-        "access_token":  token.AccessToken,
-        "refresh_token": token.RefreshToken,
-        "token_type":    "Bearer",
-        "expires_in":    token.ExpiresIn,
-        "user":          user,
-    })
-}
-```
-
-### 4.6. Bind endpoint — link Nexlink identity to existing account
-
-```go
-// POST /api/v1/user/bind-nexlink
-func (h *Handler) BindNexlink(w http.ResponseWriter, r *http.Request) {
-    var req struct {
-        Username string `json:"username"`
-        Password string `json:"password"`
-        InitData string `json:"initData"`
-    }
-    json.NewDecoder(r.Body).Decode(&req)
-
-    // 1. Verify initData
-    result, err := VerifyNexlinkInitData(req.InitData, h.dappSecret)
-    if err != nil {
-        http.Error(w, "unauthorized", 401)
-        return
-    }
-
-    // 2. Authenticate with username/password
-    user, err := h.userService.Authenticate(r.Context(), req.Username, req.Password)
-    if err != nil {
-        http.Error(w, "invalid credentials", 401)
-        return
-    }
-
-    // 3. Check not already bound
-    if user.NexlinkUserID != nil {
-        http.Error(w, "account already bound to a Nexlink user", 409)
-        return
-    }
-
-    // 4. Bind
-    err = h.userService.SetNexlinkUserID(r.Context(), user.ID, result.User.ID)
-    if err != nil {
-        // UNIQUE constraint violation → this Nexlink user is bound elsewhere
-        http.Error(w, "nexlink user already bound to another account", 409)
-        return
-    }
-
-    // 5. Issue token
-    token, err := h.oauth2.PasswordGrantInternal(user.ID, user.Username, "user")
-    if err != nil {
-        http.Error(w, "internal error", 500)
-        return
-    }
-
-    json.NewEncoder(w).Encode(map[string]any{
-        "status":        "ok",
-        "access_token":  token.AccessToken,
-        "refresh_token": token.RefreshToken,
-        "token_type":    "Bearer",
-        "expires_in":    token.ExpiresIn,
-        "user":          user,
-    })
-}
-```
-
-### 4.7. Create endpoint — new account from Nexlink identity
-
-```go
-// POST /api/v1/user/create-nexlink
-func (h *Handler) CreateNexlink(w http.ResponseWriter, r *http.Request) {
-    var req struct {
-        InitData string `json:"initData"`
-    }
-    json.NewDecoder(r.Body).Decode(&req)
-
-    // 1. Verify initData
-    result, err := VerifyNexlinkInitData(req.InitData, h.dappSecret)
-    if err != nil {
-        http.Error(w, "unauthorized", 401)
-        return
-    }
-
-    // 2. Create passwordless user
-    user, err := h.userService.CreateNexlinkUser(r.Context(), result.User.ID, result.User.Nickname, result.User.Avatar)
-    if err != nil {
-        http.Error(w, "nexlink user already exists", 409)
-        return
-    }
-
-    // 3. Issue token
-    token, err := h.oauth2.PasswordGrantInternal(user.ID, user.Username, "user")
-    if err != nil {
-        http.Error(w, "internal error", 500)
-        return
-    }
-
-    json.NewEncoder(w).Encode(map[string]any{
-        "status":        "ok",
-        "access_token":  token.AccessToken,
-        "refresh_token": token.RefreshToken,
-        "token_type":    "Bearer",
-        "expires_in":    token.ExpiresIn,
-        "user":          user,
-    })
-}
-```
-
-**Key point:** After initData verification, danbao issues its own OAuth2 token. The rest of the danbao system (middleware, refresh, revocation) works unchanged. The initData is only the **entry point** — it replaces the username/password step but everything downstream stays the same.
-
-### 4.8. Danbao-web frontend changes
-
-```js
-// danbao-web login page — handles all 4 methods
-async function login() {
-  if (window.NexlinkApp && NexlinkApp.initData) {
-    // Method 3: Inside Nexlink app — use initData
-    await loginWithInitData(NexlinkApp.initData);
-  } else {
-    // Method 1: form login, or Method 2: QR code scan
-    // QR scan also calls loginWithInitData after poll completes
-    const res = await api.post('/user/login', { username, password });
-    authStore.setToken(res.access_token);
-    router.push('/modules/profile');
-  }
-}
-
-// Shared handler for Method 2 (QR) and Method 3 (in-app)
-async function loginWithInitData(initData) {
-  const res = await api.post('/user/login-nexlink', { initData });
-
-  if (res.status === 'ok') {
-    // Already bound — logged in
-    authStore.setToken(res.access_token);
-    router.push('/modules/profile');
-    return;
-  }
-
-  if (res.status === 'unbound') {
-    // Method 4: Show authorization popup
-    showBindingPopup(res.nexlinkUser, initData);
-  }
-}
-
-// Method 4: Browser authorization popup
-function showBindingPopup(nexlinkUser, initData) {
-  // Show dialog: "Welcome, {nexlinkUser.nickname}!"
-  // Option A: "I have an existing account" → show username/password form
-  // Option B: "Create a new account" → one-click create
-}
-
-async function bindExistingAccount(username, password, initData) {
-  const res = await api.post('/user/bind-nexlink', {
-    username, password, initData,
-  });
-  authStore.setToken(res.access_token);
-  router.push('/modules/profile');
-}
-
-async function createNexlinkAccount(initData) {
-  const res = await api.post('/user/create-nexlink', { initData });
-  authStore.setToken(res.access_token);
-  router.push('/modules/profile');
-}
-```
-
-### 4.9. Existing password login must handle nullable password_hash
-
-After the migration, `password_hash` is nullable. The existing `Authenticate` method must reject users with no password:
-
-```go
-func (s *Service) Authenticate(ctx context.Context, username, password string) (Entity, error) {
-    e, err := s.repo.FindByUsername(ctx, username)
-    if err != nil { return Entity{}, ErrInvalidCredentials }
-
-    // Reject passwordless users (initData-only accounts)
-    if e.PasswordHash == "" {
-        return Entity{}, ErrInvalidCredentials
-    }
-
-    if err := bcrypt.CompareHashAndPassword(
-        []byte(e.PasswordHash), []byte(password),
-    ); err != nil {
-        return Entity{}, ErrInvalidCredentials
-    }
-    return e, nil
-}
-```
-
-### 4.10. Relevant danbao code locations
-
-| Component | File |
-|---|---|
-| OAuth2 service | `danbao/danbao-api/pkg/oauth2server/service.go` |
-| Token storage (PostgreSQL) | `danbao/danbao-api/pkg/oauth2server/store.go` |
-| User login handler | `danbao/danbao-api/internal/modules/user/handle.go` |
-| Admin login handler | `danbao/danbao-api/internal/modules/user/admin_handle.go` |
-| Admin auth middleware | `danbao/danbao-api/pkg/adminauth/adminauth.go` |
-| OAuth2 routes | `danbao/danbao-api/internal/router/oauth2.go` |
-| Request middleware | `danbao/danbao-api/internal/router/middleware.go` |
-| DB migration | `danbao/danbao-api/internal/db/migrations/000003_oauth2_tokens.sql` |
-| Web login page | `danbao/danbao-web/app/(auth)/login/page.tsx` |
-| Web auth hook | `danbao/danbao-web/hooks/use-auth.ts` |
-| Web auth store | `danbao/danbao-web/store/use-auth-store.ts` |
-| Admin auth provider | `danbao/danbao-admin/src/provider/authProvider.ts` |
-
----
-
-## 5. Registration Flow
-
-Registration is **not a separate flow** — it happens during the first login attempt, depending on which method the user chooses.
-
-### 5.1. Method 1: Form registration (general browser)
-
-User visits danbao-web in a regular browser (no `window.NexlinkApp`) and fills a traditional register form:
-
-```
-┌─────────────────────────────┐
-│ Username:  [           ]    │
-│ Email:     [           ]    │
-│ Password:  [           ]    │
-│ Confirm:   [           ]    │
-│                             │
-│       [  Register  ]        │
-└─────────────────────────────┘
-```
-
-The account is created with `nexlink_user_id = NULL`. The user can later bind their Nexlink identity when they log in via QR code or in-app — the authorization popup (Section 4.3, Method 4) handles binding.
-
-### 5.2. Methods 2 & 3: QR code scan or dApp browser login
-
-When initData arrives for a `nexlink_user_id` that doesn't exist in the database, the `POST /user/login-nexlink` endpoint returns `{ status: "unbound" }`. The frontend shows the authorization popup (Section 4.3, Method 4).
-
-If the user chooses **"Create a new account"** → `POST /user/create-nexlink` creates a passwordless account with `nexlink_user_id` set. This is the registration step — no form required.
-
-If the user chooses **"I have an existing account"** → `POST /user/bind-nexlink` links the Nexlink identity to the existing account. No new registration occurs.
-
-### 5.3. Account completion
-
-| Entry path | What's missing | How to complete |
-|---|---|---|
-| Method 1 (form) | `nexlink_user_id` | Log in via QR or in-app → authorization popup → bind |
-| Methods 2/3 → create new | password, email, custom username | Settings → "Set password" (`POST /user/set-password`) |
-| Methods 2/3 → bind existing | Nothing — already complete | — |
-
-Once both sides are filled in, the account has full access from both contexts (Nexlink app + general browser).
-
-### 5.4. Nexlink Platform Registration (prerequisite)
-
-Users must have a Nexlink account before using any dApp. The native app registration flow:
-
-```
-Phone/Email input → Verification code → Set password → Set profile → Done
-```
-
-| Step | Implementation |
-|---|---|
-| Phone/Email validation | `nexlink/lib/pages/register/register_logic.dart` |
-| Verification code | `nexlink/lib/pages/register/verify_phone/` |
-| Password setup | `nexlink/lib/pages/register/set_password/` |
-| Profile setup | `nexlink/lib/pages/register/set_self_info/` |
-
----
-
-## 6. initData Signature Verification
-
-### 6.1. Algorithm
+### 4.1. Algorithm
 
 Two-step HMAC-SHA256 derivation:
 
@@ -1030,51 +398,19 @@ Step 4: if (computed_hash === received_hash) → VALID
 
 **Important:** In step 1, `"NexlinkData"` is the **HMAC key** and `dapp_secret_key` is the **message**. This matches how the Dart `Hmac(sha256, utf8.encode(hmacKeyLabel))` constructor works (second arg = key) and how Go `hmac.New(sha256.New, []byte(hmacKeyLabel))` works (second arg = key). Both implementations are verified consistent.
 
-### 6.2. Mode A — Local Verification (Recommended)
+### 4.2. Mode A — Local Verification (Recommended)
 
 The dApp backend holds the `secret_key` and verifies locally. No network call to Nexlink.
-
-**Node.js:**
-
-```js
-import { createHmac } from 'crypto';
-
-function verifyNexlinkInitData(initData, dappSecret) {
-  const params = new URLSearchParams(initData);
-  const hash = params.get('hash');
-  if (!hash) return { valid: false, reason: 'missing hash' };
-  params.delete('hash');
-
-  const dataCheckString = [...params.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}=${v}`)
-    .join('\n');
-
-  const secretKey = createHmac('sha256', 'NexlinkData')
-    .update(dappSecret).digest();
-  const computed = createHmac('sha256', secretKey)
-    .update(dataCheckString).digest('hex');
-
-  if (computed !== hash) return { valid: false, reason: 'bad signature' };
-
-  const authDate = parseInt(params.get('auth_date'), 10);
-  if (Date.now() / 1000 - authDate > 86400) {
-    return { valid: false, reason: 'expired' };
-  }
-
-  return {
-    valid: true,
-    user: JSON.parse(params.get('user')),
-    authDate,
-    dappId: parseInt(params.get('dapp_id'), 10),
-  };
-}
-```
 
 **Go:**
 
 ```go
-func VerifyNexlinkInitData(initData, dappSecret string) (*VerifyResult, error) {
+// maxAge: how long initData stays valid. Default 24h.
+// High-security dApps should use shorter windows (e.g., 5*time.Minute).
+func VerifyNexlinkInitData(initData, dappSecret string, maxAge ...time.Duration) (*VerifyResult, error) {
+    ttl := 24 * time.Hour
+    if len(maxAge) > 0 { ttl = maxAge[0] }
+
     v, _ := url.ParseQuery(initData)
     hash := v.Get("hash")
     v.Del("hash")
@@ -1094,20 +430,66 @@ func VerifyNexlinkInitData(initData, dappSecret string) (*VerifyResult, error) {
     mac2.Write([]byte(dataCheckString))
     computed := hex.EncodeToString(mac2.Sum(nil))
 
+    // hmac.Equal is constant-time — safe against timing attacks
     if !hmac.Equal([]byte(computed), []byte(hash)) {
         return nil, errors.New("bad signature")
     }
     authDate, _ := strconv.ParseInt(v.Get("auth_date"), 10, 64)
-    if time.Now().Unix()-authDate > 86400 {
+    if time.Now().Unix()-authDate > int64(ttl.Seconds()) {
         return nil, errors.New("expired")
     }
     return &VerifyResult{ /* ... */ }, nil
 }
 ```
 
+**Node.js** (reference for third-party dApp developers using Node.js):
+
+```js
+import { createHmac, timingSafeEqual } from 'crypto';
+
+// maxAge: how long initData stays valid (seconds). Default 86400 (24h).
+// High-security dApps should use shorter windows (e.g., 300 = 5 minutes).
+function verifyNexlinkInitData(initData, dappSecret, { maxAge = 86400 } = {}) {
+  const params = new URLSearchParams(initData);
+  const hash = params.get('hash');
+  if (!hash) return { valid: false, reason: 'missing hash' };
+  params.delete('hash');
+
+  const dataCheckString = [...params.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v}`)
+    .join('\n');
+
+  const secretKey = createHmac('sha256', 'NexlinkData')
+    .update(dappSecret).digest();
+  const computed = createHmac('sha256', secretKey)
+    .update(dataCheckString).digest();
+
+  // IMPORTANT: Use constant-time comparison to prevent timing side-channel attacks.
+  // Never use === or !== to compare HMAC digests.
+  const hashBuf = Buffer.from(hash, 'hex');
+  if (computed.length !== hashBuf.length || !timingSafeEqual(computed, hashBuf)) {
+    return { valid: false, reason: 'bad signature' };
+  }
+
+  const authDate = parseInt(params.get('auth_date'), 10);
+  if (Date.now() / 1000 - authDate > maxAge) {
+    return { valid: false, reason: 'expired' };
+  }
+
+  return {
+    valid: true,
+    user: JSON.parse(params.get('user')),
+    authDate,
+    queryId: params.get('query_id'),
+    dappId: parseInt(params.get('dapp_id'), 10),
+  };
+}
+```
+
 **Note on Node.js `createHmac`:** `createHmac('sha256', 'NexlinkData')` — the second argument is the key. `.update(dappSecret)` provides the message. This matches the algorithm.
 
-### 6.3. Mode B — Remote Verification
+### 4.3. Mode B — Remote Verification
 
 For dApps that prefer not to store the secret. Calls the Nexlink API to verify:
 
@@ -1121,42 +503,9 @@ POST /dapp/verify
 
 ---
 
-## 7. Security Model
+## 5. Deep Link Format for QR Codes
 
-### Trust boundaries
-
-```
-TRUSTED:     Nexlink native app, Nexlink API, dApp backend
-             (share dapp.secret_key)
-
-UNTRUSTED:   dApp frontend (JS in WebView or browser), network
-             (receives signed initData it cannot forge)
-```
-
-### Threat mitigations
-
-| Threat | Mitigation |
-|---|---|
-| dApp JS steals user's master token | Master token never enters WebView |
-| dApp JS forges user identity | Cannot generate HMAC hash without secret |
-| Replay attack (reuse old initData) | `auth_date` expiry (24h server-enforced), `query_id` uniqueness |
-| Cross-dApp impersonation | Each dApp has its own HMAC secret |
-| Stale cached initData | Cache TTLs: 30min fresh, 24h max usable, background refresh |
-| QR code replay | One-time token, expires in 2-5 minutes |
-| QR code interception | Token is useless without Nexlink app confirmation |
-| Man-in-the-middle | All endpoints require HTTPS/TLS |
-
-### QR login specific security
-
-- QR tokens are **single-use** — consumed on first successful confirmation.
-- QR tokens **expire** after a short window (2-5 minutes).
-- The mobile app must show a **confirmation dialog** before sending initData.
-- The browser poll endpoint returns the session token **only once**, then deletes it.
-- The `initData` sent during QR confirmation is the same HMAC-signed payload used in-app — same verification, same security guarantees.
-
----
-
-## 8. Deep Link Format for QR Codes
+The QR code displayed to the user encodes a Nexlink deep link. The Nexlink app parses this deep link to identify the QR session and dApp.
 
 ```
 nexlink://auth/qr?token=<qrToken>&dapp=<dappId>
@@ -1178,7 +527,7 @@ The Nexlink app must register a handler for the `nexlink://auth/qr` scheme that:
 
 ---
 
-## 9. Dual-Mode dApp Template
+## 6. Dual-Mode dApp Template
 
 A complete pattern for dApps that work both inside Nexlink and in external browsers:
 
@@ -1296,11 +645,11 @@ try {
 
 ---
 
-## 10. Nexlink Login Widget (Hosted Embeddable Script)
+## 7. Nexlink Login Widget (Hosted Embeddable Script)
 
-The Dual-Mode Template (Section 9) requires each dApp developer to implement QR rendering, long-poll logic, and environment detection themselves. A **hosted login widget** bundles all of this into a single `<script>` tag — similar to Telegram's Login Widget.
+The Dual-Mode Template (Section 6) requires each dApp developer to implement QR rendering, long-poll logic, and environment detection themselves. A **hosted login widget** bundles all of this into a single `<script>` tag — similar to Telegram's Login Widget.
 
-### 10.1. dApp developer usage
+### 7.1. dApp developer usage
 
 ```html
 <!-- Drop-in: one script tag + one callback -->
@@ -1334,7 +683,7 @@ The Dual-Mode Template (Section 9) requires each dApp developer to implement QR 
 </script>
 ```
 
-### 10.2. What the widget does internally
+### 7.2. What the widget does internally
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -1367,7 +716,7 @@ The Dual-Mode Template (Section 9) requires each dApp developer to implement QR 
 └─────────────────────────────────────────────────────────┘
 ```
 
-### 10.3. Widget `<script>` attributes
+### 7.3. Widget `<script>` attributes
 
 | Attribute | Required | Default | Description |
 |---|---|---|---|
@@ -1379,9 +728,9 @@ The Dual-Mode Template (Section 9) requires each dApp developer to implement QR 
 | `data-qr-size` | no | `"200"` | QR code dimensions in pixels |
 | `data-container` | no | auto-insert | CSS selector for custom container element |
 
-### 10.4. Widget vs manual integration
+### 7.4. Widget vs manual integration
 
-| Aspect | Widget (`<script>` tag) | Manual (Section 9 NexlinkAuth class) |
+| Aspect | Widget (`<script>` tag) | Manual (Section 6 NexlinkAuth class) |
 |---|---|---|
 | **Setup effort** | 5 lines of HTML | ~100 lines of JS + QR library |
 | **QR rendering** | Built-in | Developer brings own QR library |
@@ -1392,7 +741,7 @@ The Dual-Mode Template (Section 9) requires each dApp developer to implement QR 
 | **Customization** | Limited to `data-*` attributes | Full control |
 | **Best for** | Quick integration, standard login pages | Custom UIs, SPAs, non-standard flows |
 
-### 10.5. Widget implementation (Nexlink-side)
+### 7.5. Widget implementation (Nexlink-side)
 
 The widget JS file is served from the Nexlink backend's static assets. Core structure:
 
@@ -1512,7 +861,7 @@ The widget JS file is served from the Nexlink backend's static assets. Core stru
 })();
 ```
 
-### 10.6. Security considerations for hosted widget
+### 7.6. Security considerations for hosted widget
 
 | Concern | Mitigation |
 |---|---|
@@ -1523,7 +872,951 @@ The widget JS file is served from the Nexlink backend's static assets. Core stru
 
 ---
 
-## 11. Implementation Checklist
+# Part II: Danbao Integration Guide
+
+---
+
+## 8. Overview & Current Auth
+
+Danbao (`danbao/`) has its **own independent auth system** that predates the Nexlink dApp browser. To work as a Nexlink dApp, danbao must support both auth paths — the existing username/password flow and the new initData-based flow.
+
+### 8.1. Danbao's current auth (standalone)
+
+Danbao uses a full OAuth2 server (`danbao-api/pkg/oauth2server/`):
+
+- **Grant types:** `password`, `refresh_token`, `authorization_code`
+- **Token type:** Opaque 256-bit bearer tokens (not JWT), stored in PostgreSQL
+- **TTLs:** Access tokens 2h, refresh tokens 7d
+- **User login:** `POST /api/v1/user/login` with `{ username, password }` → returns `{ access_token, refresh_token }`
+- **Admin login:** `POST /api/v1/admin/login` — same flow but validates `is_admin` flag and scope `"admin"`
+- **Middleware:** Bearer token validated on every request, user ID threaded into request context
+- **Frontend (danbao-web):** Stores token in localStorage, `Authorization: Bearer <token>` on every request
+- **Frontend (danbao-admin):** Same pattern, additionally re-checks `is_admin` on each `check()` call
+
+---
+
+## 9. Database Migration
+
+The current `users` table has **no column to store a Nexlink user ID**, and `password_hash` / `email` are `NOT NULL` — blocking auto-creation from initData.
+
+**Current schema constraints that block initData users:**
+
+| Column | Constraint | Problem |
+|---|---|---|
+| `password_hash` | `VARCHAR(255) NOT NULL` | initData users have no password |
+| `email` | `VARCHAR(255) NOT NULL` | initData doesn't include email |
+| `username` | `VARCHAR(64) NOT NULL UNIQUE` | Need to generate one from Nexlink identity |
+| (missing) | — | No column to store `nexlink_user_id` |
+
+**Required migration:**
+
+```sql
+-- File: danbao-api/internal/db/migrations/000018_nexlink_user_binding.sql
+
+-- 1. Add Nexlink binding column (nullable — existing users won't have it)
+ALTER TABLE users
+  ADD COLUMN nexlink_user_id BIGINT;
+
+-- Unique constraint: one Nexlink user → one danbao user
+CREATE UNIQUE INDEX users_nexlink_user_id_uniq
+  ON users(nexlink_user_id) WHERE nexlink_user_id IS NOT NULL;
+
+-- 2. Allow passwordless users (initData-created accounts)
+ALTER TABLE users
+  ALTER COLUMN password_hash DROP NOT NULL;
+
+-- 3. Allow email-less users (initData doesn't provide email)
+ALTER TABLE users
+  ALTER COLUMN email DROP NOT NULL;
+```
+
+**Updated user table after migration:**
+
+| Column | Type | Constraint | Notes |
+|---|---|---|---|
+| `id` | BIGSERIAL | PK | danbao internal ID |
+| `username` | VARCHAR(64) | NOT NULL UNIQUE | Generated as `"nx_{id}"` for initData users (id = this table's PK) |
+| `password_hash` | VARCHAR(255) | **NULLABLE** | NULL for initData-only users |
+| `email` | VARCHAR(255) | **NULLABLE** | NULL for initData-only users |
+| `nexlink_user_id` | BIGINT | UNIQUE (nullable) | **NEW** — Nexlink numeric user ID |
+| `display_name` | VARCHAR(64) | nullable | Synced from initData `nickname` |
+| `avatar_url` | VARCHAR(512) | nullable | Synced from initData `avatar` |
+| ... | | | (other columns unchanged) |
+
+---
+
+## 10. Four Login Methods — One Account
+
+Every danbao user ends up with **one account** regardless of how they first arrive. The four entry methods are:
+
+| # | Method | Context | Nexlink account required? |
+|---|---|---|---|
+| 1 | **Form registration** | General browser | No |
+| 2 | **QR code scan** | General browser + Nexlink app | Yes |
+| 3 | **dApp browser login** | Inside Nexlink app | Yes (automatic) |
+| 4 | **Browser authorization popup** | General browser (after initData arrives) | Yes |
+
+All Nexlink-based methods (2, 3, 4) deliver the same `initData` payload to the dApp backend. The backend handles them identically: verify signature → look up `nexlink_user_id` → respond.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                                                                  │
+│  Method 1: Form registration (no Nexlink needed)                 │
+│  ───────────────────────────────────────────────                 │
+│  User visits danbao-web → fills register form                    │
+│  → account created with username, password, email                │
+│  → nexlink_user_id = NULL                                        │
+│  → user can later bind Nexlink via Method 4                      │
+│                                                                  │
+│  Method 2: QR code scan login (general browser)                  │
+│  ──────────────────────────────────────────────                  │
+│  User visits danbao-web in Chrome/Safari                         │
+│  → site shows QR code (or Nexlink Login Widget)                  │
+│  → user scans with Nexlink app → confirms                        │
+│  → Nexlink backend delivers initData to dApp backend             │
+│  → backend verifies → checks nexlink_user_id binding             │
+│                                                                  │
+│  Method 3: dApp browser login (inside Nexlink app)               │
+│  ─────────────────────────────────────────────────               │
+│  User opens danbao inside Nexlink app                            │
+│  → initData auto-injected by SDK                                 │
+│  → frontend sends initData to dApp backend                       │
+│  → backend verifies → checks nexlink_user_id binding             │
+│                                                                  │
+│  Method 4: Browser authorization popup                           │
+│  ────────────────────────────────────────                        │
+│  After Method 2 or 3 delivers initData for an UNBOUND user:     │
+│  → backend returns { status: "unbound", nexlinkUser }            │
+│  → browser shows popup: "Bind existing account or create new?"   │
+│  → user chooses to bind (enter password) or create fresh         │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Method 1: Form registration
+
+Standard registration — no Nexlink identity involved.
+
+```
+POST /api/v1/user/register
+{ "username": "john_doe", "password": "...", "email": "john@mail.com" }
+    │
+    ▼
+Validate: username must NOT start with "nx_" (reserved for initData-created accounts)
+    │
+    ▼
+INSERT INTO users (
+  username,        -- "john_doe"
+  password_hash,   -- bcrypt("password")
+  email,           -- "john@mail.com"
+  nexlink_user_id  -- NULL (not bound)
+)
+    │
+    ▼
+Issue OAuth2 token → user is logged in
+```
+
+The user logs in later with `POST /user/login { username, password }` as usual.
+
+#### Methods 2 & 3: Nexlink login (QR scan or in-app)
+
+Both methods deliver `initData` to the same backend endpoint. The backend does **not** auto-create an account when the `nexlink_user_id` is unknown — it returns `"unbound"` status so the frontend can show the authorization popup (Method 4).
+
+```
+initData arrives (via QR poll or in-app SDK)
+    │
+    ▼
+POST /api/v1/user/login-nexlink
+{ "initData": "user=%7B...%7D&hash=..." }
+    │
+    ▼
+Backend:
+  1. Verify initData signature → extract nexlink_user_id
+  2. SELECT * FROM users WHERE nexlink_user_id = 12345
+    │
+    ├── FOUND → already bound
+    │   → sync profile (display_name, avatar_url)
+    │   → issue OAuth2 token
+    │   → return { status: "ok", token, user }
+    │
+    └── NOT FOUND → unbound
+        → return { status: "unbound", nexlinkUser: { id, nickname, avatar } }
+```
+
+When the frontend receives `"ok"`, the user is logged in. When it receives `"unbound"`, it triggers the authorization popup (Method 4).
+
+#### Method 4: Browser authorization popup
+
+When initData arrives for an unknown `nexlink_user_id`, the frontend shows a popup:
+
+```
+┌──────────────────────────────────────────────┐
+│                                              │
+│  Welcome, John!                              │
+│  Your Nexlink account is not yet linked.     │
+│                                              │
+│  ┌────────────────────────────────────────┐  │
+│  │  I have an existing account            │  │
+│  │  (enter username + password to bind)   │  │
+│  └────────────────────────────────────────┘  │
+│                                              │
+│  ┌────────────────────────────────────────┐  │
+│  │  Create a new account                  │  │
+│  │  (auto-create from Nexlink identity)   │  │
+│  └────────────────────────────────────────┘  │
+│                                              │
+└──────────────────────────────────────────────┘
+```
+
+**Option A — Bind existing account:** User enters their danbao username and password. See Section 13 for the endpoint.
+
+**Option B — Create new account:** One-click, no form needed. See Section 14 for the endpoint.
+
+The user can later set a password via `POST /user/set-password` to enable form login.
+
+#### Returning user (already bound)
+
+Once an account has `nexlink_user_id` set, all subsequent Nexlink logins (QR or in-app) skip the popup:
+
+```
+initData.user.id = 12345
+    │
+    ▼
+SELECT * FROM users WHERE nexlink_user_id = 12345
+    → found: danbao user id=1
+    │
+    ▼
+UPDATE users SET
+  display_name = initData.nickname,   -- sync profile
+  avatar_url = initData.avatar,
+  last_login_at = NOW()
+WHERE nexlink_user_id = 12345
+    │
+    ▼
+Issue OAuth2 token → return { status: "ok", token, user }
+```
+
+#### Account completion
+
+| Entry path | What's missing | How to complete |
+|---|---|---|
+| Method 1 (form) | `nexlink_user_id` | Log in via QR or in-app → bind (Method 4, Option A) |
+| Method 2/3 → Option B (create new) | password, email, custom username | Settings → "Set password" (`POST /user/set-password`) |
+| Method 2/3 → Option A (bind existing) | Nothing — already complete | — |
+
+#### Why duplicates are impossible
+
+| Guard | How |
+|---|---|
+| `nexlink_user_id UNIQUE` constraint | DB rejects a second row with the same Nexlink user ID |
+| Option A bind checks `nexlink_user_id IS NULL` | Won't overwrite an already-bound account |
+| Option B checks `SELECT` before `INSERT` | Only creates if no match exists |
+| `"unbound"` response prevents silent auto-create | User must explicitly choose bind or create |
+| `nx_` prefix reserved in form registration | Prevents username collision with auto-generated `nx_{id}` usernames |
+
+---
+
+## 11. Backend Service Methods
+
+```go
+// FindByNexlinkUserID looks up a danbao user by Nexlink ID.
+// Returns ErrNotFound if no account is bound.
+func (s *Service) FindByNexlinkUserID(ctx context.Context, nexlinkUserID int64) (UserResp, error) {
+    e, err := s.repo.FindByNexlinkUserID(ctx, nexlinkUserID)
+    if err != nil {
+        return UserResp{}, err
+    }
+    return toResp(e), nil
+}
+
+// CreateNexlinkUser creates a new passwordless user bound to a Nexlink identity.
+// Called when user chooses "Create new account" in the authorization popup.
+// Username is set to "nx_{id}" where id is the users table PK (always unique).
+func (s *Service) CreateNexlinkUser(
+    ctx context.Context,
+    nexlinkUserID int64,
+    nickname string,
+    avatar string,
+) (UserResp, error) {
+    // Single query: INSERT with username derived from the auto-generated id
+    e, err := s.repo.CreateNexlinkUser(ctx, nexlinkUserID, nickname, avatar)
+    if err != nil {
+        return UserResp{}, err
+    }
+    return toResp(e), nil
+}
+
+// SetNexlinkUserID binds a Nexlink identity to an existing account.
+// Called when user chooses "Bind existing account" in the authorization popup.
+func (s *Service) SetNexlinkUserID(ctx context.Context, userID int64, nexlinkUserID int64) error {
+    return s.repo.SetNexlinkUserID(ctx, userID, nexlinkUserID)
+}
+
+// ClearNexlinkUserID removes the Nexlink binding from an account.
+// Called when user disconnects their Nexlink identity (Section 15).
+func (s *Service) ClearNexlinkUserID(ctx context.Context, userID int64) error {
+    return s.repo.ClearNexlinkUserID(ctx, userID)
+}
+
+// UpdateProfile syncs display name and avatar from initData.
+func (s *Service) UpdateProfile(ctx context.Context, userID int64, nickname, avatar string) error {
+    return s.repo.UpdateProfile(ctx, userID, nickname, avatar)
+}
+```
+
+```sql
+-- name: FindByNexlinkUserID :one
+SELECT * FROM users WHERE nexlink_user_id = $1;
+
+-- name: CreateNexlinkUser :one
+-- username = "nx_{id}" — uses nextval/currval to derive from the auto-generated PK.
+-- This guarantees uniqueness since id is the primary key.
+-- ON CONFLICT prevents duplicate insert errors from concurrent requests (e.g., double-click).
+INSERT INTO users (
+  id, username, nexlink_user_id,
+  display_name, avatar_url
+) VALUES (
+  nextval('users_id_seq'),
+  'nx_' || currval('users_id_seq'),
+  $1, $2, $3
+)
+ON CONFLICT (nexlink_user_id) DO NOTHING
+RETURNING *;
+
+-- name: SetNexlinkUserID :exec
+UPDATE users SET nexlink_user_id = $1 WHERE id = $2;
+
+-- name: ClearNexlinkUserID :exec
+UPDATE users SET nexlink_user_id = NULL WHERE id = $1;
+```
+
+---
+
+## 12. Endpoint: `POST /user/login-nexlink`
+
+Verifies initData, looks up the bound user, and returns `"ok"` or `"unbound"`.
+
+### 12.1. Handler
+
+```go
+// POST /api/v1/user/login-nexlink
+func (h *Handler) LoginNexlink(w http.ResponseWriter, r *http.Request) {
+    var req struct {
+        InitData string `json:"initData"`
+    }
+    json.NewDecoder(r.Body).Decode(&req)
+
+    // 1. Verify initData signature
+    result, err := VerifyNexlinkInitData(req.InitData, h.dappSecret)
+    if err != nil {
+        http.Error(w, "unauthorized", 401)
+        return
+    }
+
+    // 2. Replay prevention — reject reused initData (see Section 12.2)
+    if err := h.checkReplay(r.Context(), result.QueryID); err != nil {
+        http.Error(w, "initData already used", 403)
+        return
+    }
+
+    // 3. Look up existing bound user
+    user, err := h.userService.FindByNexlinkUserID(r.Context(), result.User.ID)
+    if errors.Is(err, ErrNotFound) {
+        // No account bound to this nexlink_user_id → tell frontend
+        json.NewEncoder(w).Encode(map[string]any{
+            "status": "unbound",
+            "nexlinkUser": map[string]any{
+                "id":       result.User.ID,
+                "nickname": result.User.Nickname,
+                "avatar":   result.User.Avatar,
+            },
+        })
+        return
+    }
+    if err != nil {
+        http.Error(w, "internal error", 500)
+        return
+    }
+
+    // 4. Sync profile from initData (skip if unchanged)
+    if user.DisplayName != result.User.Nickname || user.AvatarURL != result.User.Avatar {
+        _ = h.userService.UpdateProfile(r.Context(), user.ID, result.User.Nickname, result.User.Avatar)
+    }
+
+    // 5. Issue danbao OAuth2 token
+    token, err := h.oauth2.PasswordGrantInternal(user.ID, user.Username, "user")
+    if err != nil {
+        http.Error(w, "internal error", 500)
+        return
+    }
+
+    // 6. Return same response shape as /user/login
+    json.NewEncoder(w).Encode(map[string]any{
+        "status":        "ok",
+        "access_token":  token.AccessToken,
+        "refresh_token": token.RefreshToken,
+        "token_type":    "Bearer",
+        "expires_in":    token.ExpiresIn,
+        "user":          user,
+    })
+}
+```
+
+### 12.2. Replay prevention (query_id tracking)
+
+Within the `auth_date` validity window (default 24h), a captured initData string can be replayed against any endpoint. The `query_id` field in initData is unique per WebView session and should be tracked to prevent reuse.
+
+```go
+// checkReplay is called by every endpoint that accepts initData, after signature verification.
+func (h *Handler) checkReplay(ctx context.Context, queryID string) error {
+    // SET NX with TTL = auth_date max age (24h).
+    // If the key already exists, this initData was already consumed.
+    ok, err := h.redis.SetNX(ctx, "initdata:used:"+queryID, "1", 24*time.Hour).Result()
+    if err != nil {
+        return fmt.Errorf("replay check failed: %w", err)
+    }
+    if !ok {
+        return errors.New("initData already used")
+    }
+    return nil
+}
+```
+
+| Aspect | Detail |
+|---|---|
+| Storage | Redis `SET NX` with TTL matching auth_date max age |
+| Key format | `initdata:used:{query_id}` |
+| Scope | Per dApp instance (each dApp backend tracks its own) |
+| Memory | ~100 bytes per key x number of logins per 24h — negligible |
+| Optional | dApps with low-security requirements can skip this check |
+
+**Note on QR flow:** In the QR flow, initData is generated by the Nexlink backend at confirm time and delivered once via the status endpoint (one-time read + delete). The `query_id` is still present, so the same replay check applies.
+
+---
+
+## 13. Endpoint: `POST /user/bind-nexlink`
+
+Links a Nexlink identity to an existing danbao account (Method 4, Option A).
+
+### 13.1. Handler
+
+```go
+// POST /api/v1/user/bind-nexlink
+func (h *Handler) BindNexlink(w http.ResponseWriter, r *http.Request) {
+    var req struct {
+        Username string `json:"username"`
+        Password string `json:"password"`
+        InitData string `json:"initData"`
+    }
+    json.NewDecoder(r.Body).Decode(&req)
+
+    // 1. Rate limit — prevent brute-forcing passwords (see Section 13.2)
+    key := "bind:" + sha256Hex(req.InitData)
+    if !h.rateLimiter.Allow(key, 5, 10*time.Minute) {
+        http.Error(w, "too many attempts, try again later", 429)
+        return
+    }
+
+    // 2. Verify initData
+    result, err := VerifyNexlinkInitData(req.InitData, h.dappSecret)
+    if err != nil {
+        http.Error(w, "unauthorized", 401)
+        return
+    }
+
+    // 3. Replay prevention (see Section 12.2)
+    if err := h.checkReplay(r.Context(), result.QueryID); err != nil {
+        http.Error(w, "initData already used", 403)
+        return
+    }
+
+    // 4. Authenticate with username/password
+    user, err := h.userService.Authenticate(r.Context(), req.Username, req.Password)
+    if err != nil {
+        http.Error(w, "invalid credentials", 401)
+        return
+    }
+
+    // 5. Check not already bound
+    if user.NexlinkUserID != nil {
+        http.Error(w, "account already bound to a Nexlink user", 409)
+        return
+    }
+
+    // 6. Bind
+    err = h.userService.SetNexlinkUserID(r.Context(), user.ID, result.User.ID)
+    if err != nil {
+        // UNIQUE constraint violation → this Nexlink user is bound elsewhere
+        http.Error(w, "nexlink user already bound to another account", 409)
+        return
+    }
+
+    // 7. Issue token
+    token, err := h.oauth2.PasswordGrantInternal(user.ID, user.Username, "user")
+    if err != nil {
+        http.Error(w, "internal error", 500)
+        return
+    }
+
+    json.NewEncoder(w).Encode(map[string]any{
+        "status":        "ok",
+        "access_token":  token.AccessToken,
+        "refresh_token": token.RefreshToken,
+        "token_type":    "Bearer",
+        "expires_in":    token.ExpiresIn,
+        "user":          user,
+    })
+}
+```
+
+| Column | Before bind | After bind |
+|---|---|---|
+| `username` | `john_doe` | `john_doe` |
+| `password_hash` | `$2a$10$...` | `$2a$10$...` |
+| `email` | `john@mail.com` | `john@mail.com` |
+| `nexlink_user_id` | **NULL** | **12345** |
+
+### 13.2. Brute-force protection
+
+This endpoint accepts username + password + initData. An attacker with valid initData could attempt password brute-forcing.
+
+| Protection | Implementation |
+|---|---|
+| Rate limit per initData | 5 bind attempts per initData per 10 minutes |
+| Rate limit per IP | 20 bind attempts per IP per 10 minutes |
+| Account lockout | Lock account after 10 failed bind attempts across all initDatas |
+| Logging | Log all failed bind attempts with IP, initData hash, username |
+
+---
+
+## 14. Endpoint: `POST /user/create-nexlink`
+
+Creates a new passwordless account from a Nexlink identity (Method 4, Option B).
+
+### 14.1. Handler
+
+```go
+// POST /api/v1/user/create-nexlink
+func (h *Handler) CreateNexlink(w http.ResponseWriter, r *http.Request) {
+    var req struct {
+        InitData string `json:"initData"`
+    }
+    json.NewDecoder(r.Body).Decode(&req)
+
+    // 1. Verify initData
+    result, err := VerifyNexlinkInitData(req.InitData, h.dappSecret)
+    if err != nil {
+        http.Error(w, "unauthorized", 401)
+        return
+    }
+
+    // 2. Replay prevention — blocks stolen initData reuse (see Section 12.2)
+    if err := h.checkReplay(r.Context(), result.QueryID); err != nil {
+        http.Error(w, "initData already used", 403)
+        return
+    }
+
+    // 3. Rate limit per Nexlink user ID (see Section 14.3)
+    key := fmt.Sprintf("create-nexlink:%d", result.User.ID)
+    if !h.rateLimiter.Allow(key, 3, 10*time.Minute) {
+        http.Error(w, "too many attempts", 429)
+        return
+    }
+
+    // 4. Create passwordless user (ON CONFLICT handles race condition, see Section 14.2)
+    user, err := h.userService.CreateNexlinkUser(r.Context(), result.User.ID, result.User.Nickname, result.User.Avatar)
+    if err != nil {
+        // ON CONFLICT returned no rows — user already exists, fall back to login
+        user, err = h.userService.FindByNexlinkUserID(r.Context(), result.User.ID)
+        if err != nil {
+            http.Error(w, "internal error", 500)
+            return
+        }
+    }
+
+    // 5. Issue token
+    token, err := h.oauth2.PasswordGrantInternal(user.ID, user.Username, "user")
+    if err != nil {
+        http.Error(w, "internal error", 500)
+        return
+    }
+
+    json.NewEncoder(w).Encode(map[string]any{
+        "status":        "ok",
+        "access_token":  token.AccessToken,
+        "refresh_token": token.RefreshToken,
+        "token_type":    "Bearer",
+        "expires_in":    token.ExpiresIn,
+        "user":          user,
+    })
+}
+```
+
+**Key point:** After initData verification, danbao issues its own OAuth2 token. The rest of the danbao system (middleware, refresh, revocation) works unchanged. The initData is only the **entry point** — it replaces the username/password step but everything downstream stays the same.
+
+### 14.2. Race condition protection (ON CONFLICT)
+
+Concurrent requests with the same initData (e.g., user double-clicks) are handled by `ON CONFLICT (nexlink_user_id) DO NOTHING` in the SQL (see Section 11). If `RETURNING` returns no rows, the user already exists — fall back to `FindByNexlinkUserID` and issue a token for the existing account.
+
+### 14.3. Abuse prevention
+
+This endpoint accepts only initData — no password, no CAPTCHA. An attacker with stolen initData could create an account as the victim. The replay check (Section 12.2) is the primary defense. Rate limiting adds a secondary layer.
+
+| Protection | What it prevents |
+|---|---|
+| Replay check (`query_id`) | Stolen initData reuse — attacker can't create account with someone else's identity |
+| Rate limit per `nexlink_user_id` | 3 create attempts per user per 10 min |
+| `ON CONFLICT` (Section 14.2) | Race condition from double-click |
+
+---
+
+## 15. Endpoint: `POST /user/unbind-nexlink`
+
+Disconnects a Nexlink identity from a danbao account. If a user's Nexlink account is compromised, this prevents the attacker from using `login-nexlink` to access the danbao account.
+
+### 15.1. Handler
+
+```go
+// POST /api/v1/user/unbind-nexlink
+// Requires: valid danbao session token (user must be logged in with password)
+func (h *Handler) UnbindNexlink(w http.ResponseWriter, r *http.Request) {
+    userID := r.Context().Value("userID").(int64) // from auth middleware
+
+    // 1. Load user
+    user, err := h.userService.FindByID(r.Context(), userID)
+    if err != nil {
+        http.Error(w, "not found", 404)
+        return
+    }
+
+    // 2. Require password — prevent unbinding via stolen Nexlink initData session
+    if user.PasswordHash == nil || *user.PasswordHash == "" {
+        // Passwordless user (initData-only) cannot unbind — they'd lose all access
+        http.Error(w, "set a password before unbinding", 400)
+        return
+    }
+
+    var req struct {
+        Password string `json:"password"`
+    }
+    json.NewDecoder(r.Body).Decode(&req)
+
+    // 3. Verify password
+    if err := bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(req.Password)); err != nil {
+        http.Error(w, "invalid password", 401)
+        return
+    }
+
+    // 4. Clear nexlink_user_id
+    err = h.userService.ClearNexlinkUserID(r.Context(), userID)
+    if err != nil {
+        http.Error(w, "internal error", 500)
+        return
+    }
+
+    // 5. Revoke all existing sessions — attacker's tokens become invalid immediately
+    _ = h.oauth2.RevokeAllTokens(r.Context(), userID)
+
+    json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+```
+
+### 15.2. Rules
+
+| Rule | Reason |
+|---|---|
+| Requires valid session (password-based login) | Prevents attacker from unbinding via stolen initData |
+| Requires password confirmation | Extra verification — unbinding is destructive |
+| Revokes all sessions after unbind | Attacker's existing tokens become invalid immediately |
+| Passwordless users cannot unbind | They'd lose all access (no password to log in with) |
+| After unbinding, user can re-bind later | Via authorization popup (Method 4) on next Nexlink login |
+
+---
+
+## 16. Password Login (nullable password_hash)
+
+After the migration, `password_hash` is nullable. The existing `Authenticate` method must reject users with no password:
+
+```go
+func (s *Service) Authenticate(ctx context.Context, username, password string) (Entity, error) {
+    e, err := s.repo.FindByUsername(ctx, username)
+    if err != nil { return Entity{}, ErrInvalidCredentials }
+
+    // Reject passwordless users (initData-only accounts)
+    if e.PasswordHash == "" {
+        return Entity{}, ErrInvalidCredentials
+    }
+
+    if err := bcrypt.CompareHashAndPassword(
+        []byte(e.PasswordHash), []byte(password),
+    ); err != nil {
+        return Entity{}, ErrInvalidCredentials
+    }
+    return e, nil
+}
+```
+
+---
+
+## 17. Frontend Changes (danbao-web)
+
+```js
+// danbao-web login page — handles all 4 methods
+async function login() {
+  if (window.NexlinkApp && NexlinkApp.initData) {
+    // Method 3: Inside Nexlink app — use initData
+    await loginWithInitData(NexlinkApp.initData);
+  } else {
+    // Method 1: form login, or Method 2: QR code scan
+    // QR scan also calls loginWithInitData after poll completes
+    const res = await api.post('/user/login', { username, password });
+    authStore.setToken(res.access_token);
+    router.push('/modules/profile');
+  }
+}
+
+// Shared handler for Method 2 (QR) and Method 3 (in-app)
+async function loginWithInitData(initData) {
+  const res = await api.post('/user/login-nexlink', { initData });
+
+  if (res.status === 'ok') {
+    // Already bound — logged in
+    authStore.setToken(res.access_token);
+    router.push('/modules/profile');
+    return;
+  }
+
+  if (res.status === 'unbound') {
+    // Method 4: Show authorization popup
+    showBindingPopup(res.nexlinkUser, initData);
+  }
+}
+
+// Method 4: Browser authorization popup
+function showBindingPopup(nexlinkUser, initData) {
+  // Show dialog: "Welcome, {nexlinkUser.nickname}!"
+  // Option A: "I have an existing account" → show username/password form
+  // Option B: "Create a new account" → one-click create
+}
+
+async function bindExistingAccount(username, password, initData) {
+  const res = await api.post('/user/bind-nexlink', {
+    username, password, initData,
+  });
+  authStore.setToken(res.access_token);
+  router.push('/modules/profile');
+}
+
+async function createNexlinkAccount(initData) {
+  const res = await api.post('/user/create-nexlink', { initData });
+  authStore.setToken(res.access_token);
+  router.push('/modules/profile');
+}
+```
+
+---
+
+## 18. Registration Flow
+
+Registration is **not a separate flow** — it happens during the first login attempt, depending on which method the user chooses.
+
+### 18.1. Method 1: Form registration (general browser)
+
+User visits danbao-web in a regular browser (no `window.NexlinkApp`) and fills a traditional register form:
+
+```
+┌─────────────────────────────┐
+│ Username:  [           ]    │
+│ Email:     [           ]    │
+│ Password:  [           ]    │
+│ Confirm:   [           ]    │
+│                             │
+│       [  Register  ]        │
+└─────────────────────────────┘
+```
+
+The account is created with `nexlink_user_id = NULL`. The user can later bind their Nexlink identity when they log in via QR code or in-app — the authorization popup (Section 10, Method 4) handles binding.
+
+### 18.2. Methods 2 & 3: QR code scan or dApp browser login
+
+When initData arrives for a `nexlink_user_id` that doesn't exist in the database, the `POST /user/login-nexlink` endpoint returns `{ status: "unbound" }`. The frontend shows the authorization popup (Section 10, Method 4).
+
+If the user chooses **"Create a new account"** → `POST /user/create-nexlink` creates a passwordless account with `nexlink_user_id` set. This is the registration step — no form required.
+
+If the user chooses **"I have an existing account"** → `POST /user/bind-nexlink` links the Nexlink identity to the existing account. No new registration occurs.
+
+### 18.3. Account completion
+
+| Entry path | What's missing | How to complete |
+|---|---|---|
+| Method 1 (form) | `nexlink_user_id` | Log in via QR or in-app → authorization popup → bind |
+| Methods 2/3 → create new | password, email, custom username | Settings → "Set password" (`POST /user/set-password`) |
+| Methods 2/3 → bind existing | Nothing — already complete | — |
+
+Once both sides are filled in, the account has full access from both contexts (Nexlink app + general browser).
+
+### 18.4. Nexlink Platform Registration (prerequisite)
+
+Users must have a Nexlink account before using any dApp. The native app registration flow:
+
+```
+Phone/Email input → Verification code → Set password → Set profile → Done
+```
+
+| Step | Implementation |
+|---|---|
+| Phone/Email validation | `nexlink/lib/pages/register/register_logic.dart` |
+| Verification code | `nexlink/lib/pages/register/verify_phone/` |
+| Password setup | `nexlink/lib/pages/register/set_password/` |
+| Profile setup | `nexlink/lib/pages/register/set_self_info/` |
+
+---
+
+## 19. Code Locations
+
+| Component | File |
+|---|---|
+| OAuth2 service | `danbao/danbao-api/pkg/oauth2server/service.go` |
+| Token storage (PostgreSQL) | `danbao/danbao-api/pkg/oauth2server/store.go` |
+| User login handler | `danbao/danbao-api/internal/modules/user/handle.go` |
+| Admin login handler | `danbao/danbao-api/internal/modules/user/admin_handle.go` |
+| Admin auth middleware | `danbao/danbao-api/pkg/adminauth/adminauth.go` |
+| OAuth2 routes | `danbao/danbao-api/internal/router/oauth2.go` |
+| Request middleware | `danbao/danbao-api/internal/router/middleware.go` |
+| DB migration | `danbao/danbao-api/internal/db/migrations/000003_oauth2_tokens.sql` |
+| Web login page | `danbao/danbao-web/app/(auth)/login/page.tsx` |
+| Web auth hook | `danbao/danbao-web/hooks/use-auth.ts` |
+| Web auth store | `danbao/danbao-web/store/use-auth-store.ts` |
+| Admin auth provider | `danbao/danbao-admin/src/provider/authProvider.ts` |
+
+---
+
+# Part III: Security & Operations
+
+---
+
+## 20. Security Model
+
+This section covers the overall trust model and threat mitigations. Endpoint-specific security measures (rate limiting, replay prevention, brute-force protection) are documented inline with each endpoint in Part II.
+
+### Trust boundaries
+
+```
+TRUSTED:     Nexlink native app, Nexlink API, dApp backend
+             (share dapp.secret_key)
+
+UNTRUSTED:   dApp frontend (JS in WebView or browser), network
+             (receives signed initData it cannot forge)
+```
+
+### Threat mitigations
+
+| Threat | Mitigation |
+|---|---|
+| dApp JS steals user's master token | Master token never enters WebView |
+| dApp JS forges user identity | Cannot generate HMAC hash without secret |
+| Replay attack (reuse old initData) | `auth_date` expiry (24h server-enforced), `query_id` tracking (Section 12.2) |
+| Cross-dApp impersonation | Each dApp has its own HMAC secret |
+| Stale cached initData | Cache TTLs: 30min fresh, 24h max usable, background refresh |
+| QR code replay | One-time token, expires in 2-5 minutes |
+| QR code interception | Token is useless without Nexlink app confirmation |
+| Man-in-the-middle | All endpoints require HTTPS/TLS |
+| Bind endpoint brute-force | Rate limiting + account lockout (Section 13.2) |
+| Create endpoint abuse | Replay prevention + rate limiting (Section 14.3) |
+| Compromised Nexlink account | Unbind flow with session revocation (Section 15) |
+
+### QR login specific security
+
+- QR tokens are **single-use** — consumed on first successful confirmation.
+- QR tokens **expire** after a short window (2-5 minutes).
+- The mobile app must show a **confirmation dialog** before sending initData.
+- The browser poll endpoint returns the session token **only once**, then deletes it.
+- The `initData` sent during QR confirmation is the same HMAC-signed payload used in-app — same verification, same security guarantees.
+
+---
+
+## 21. Performance & Scalability
+
+These optimizations are not required for initial deployment but should be considered as traffic grows.
+
+### Profile sync optimization
+
+The returning-user login syncs `display_name` and `avatar_url` on every login. At scale, skip the write if values haven't changed (already integrated into Section 12 handler):
+
+```go
+if e.DisplayName != nickname || e.AvatarURL != avatar {
+    _ = s.repo.UpdateProfile(ctx, e.ID, nickname, avatar)
+}
+```
+
+### QR long-polling scalability
+
+The current `QrStatus` handler holds one connection per waiting browser and polls the database every 1 second via a ticker. This works for moderate traffic but becomes a bottleneck at scale.
+
+**Current approach (sufficient for <1000 concurrent QR sessions):**
+
+```
+Browser → long-poll → dApp backend → long-poll → Nexlink backend
+                                                   ↕ (1s ticker)
+                                                   PostgreSQL/Redis
+```
+
+**Scaled approach (for >1000 concurrent QR sessions):**
+
+```
+Browser → SSE/WebSocket → dApp backend → SSE → Nexlink backend
+                                                ↕ (pub/sub)
+                                                Redis pub/sub
+```
+
+| Approach | Connections | DB queries | When to use |
+|---|---|---|---|
+| Current (ticker polling) | 1 per browser + 1 per dApp backend | 1/sec per session | <1000 concurrent QR sessions |
+| Redis pub/sub + SSE | 1 per browser (SSE) | 0 while waiting | >1000 concurrent QR sessions |
+
+**Redis pub/sub implementation:**
+
+```go
+// Instead of ticker polling:
+func (h *Handler) QrStatus(w http.ResponseWriter, r *http.Request) {
+    token := r.URL.Query().Get("token")
+
+    // Subscribe to channel for this token
+    ch := h.redis.Subscribe(r.Context(), "qr:"+token)
+    defer ch.Close()
+
+    // Check current status first (might already be confirmed)
+    session, _ := h.qrStore.Get(r.Context(), token)
+    if session.Status != "pending" {
+        // Return immediately
+        json.NewEncoder(w).Encode(session)
+        return
+    }
+
+    // Wait for pub/sub notification or timeout
+    select {
+    case msg := <-ch.Channel():
+        // Status changed — fetch and return
+        session, _ = h.qrStore.Get(r.Context(), token)
+        json.NewEncoder(w).Encode(session)
+    case <-time.After(25 * time.Second):
+        json.NewEncoder(w).Encode(map[string]string{"status": "pending"})
+    case <-r.Context().Done():
+        return
+    }
+}
+
+// In QrConfirm handler, after storing initData:
+h.redis.Publish(ctx, "qr:"+token, "confirmed")
+```
+
+---
+
+# Part IV: Implementation Status
+
+---
+
+## 22. Implementation Checklist
 
 ### Already implemented
 
@@ -1540,41 +1833,59 @@ The widget JS file is served from the Nexlink backend's static assets. Core stru
 - [x] Danbao OAuth2 server (password, refresh_token, authorization_code grants)
 - [x] Danbao user/admin login endpoints
 
-### To be implemented for danbao initData integration
+### To be implemented: Danbao endpoints (Part II)
 
-- [ ] **danbao-api: DB migration `000018_nexlink_user_binding.sql`** — add `nexlink_user_id` column; make `password_hash` and `email` nullable
-- [ ] **danbao-api: Update `Entity` struct** — add `NexlinkUserID` field
-- [ ] **danbao-api: `FindByNexlinkUserID` query** — lookup by `nexlink_user_id`
-- [ ] **danbao-api: `CreateNexlinkUser` query** — insert without password/email
-- [ ] **danbao-api: `SetNexlinkUserID` repo method** — `UPDATE users SET nexlink_user_id = $1 WHERE id = $2`
-- [ ] **danbao-api: `POST /user/login-nexlink` endpoint** — verify initData, return `"ok"` (bound) or `"unbound"` (not found)
-- [ ] **danbao-api: `POST /user/bind-nexlink` endpoint** — verify initData + password, bind `nexlink_user_id` to existing account (Method 4, Option A)
-- [ ] **danbao-api: `POST /user/create-nexlink` endpoint** — verify initData, create passwordless account (Method 4, Option B)
-- [ ] **danbao-api: `POST /user/set-password` endpoint** — let initData-created users set username/password/email
-- [ ] **danbao-api: Guard `Authenticate` for NULL password_hash** — reject passwordless users on password login
-- [ ] **danbao-web: Dual-mode login page** — detect `window.NexlinkApp`, auto-login with initData or show form/QR
-- [ ] **danbao-web: Authorization popup UI** — show "Bind existing account" / "Create new account" when `login-nexlink` returns `"unbound"`
-- [ ] **danbao-web: Set password UI** — settings page for initData-created users to set password/email
+- [ ] DB migration `000018_nexlink_user_binding.sql` — add `nexlink_user_id` column; make `password_hash` and `email` nullable (Section 9)
+- [ ] Update `Entity` struct — add `NexlinkUserID` field
+- [ ] `FindByNexlinkUserID` query — lookup by `nexlink_user_id` (Section 11)
+- [ ] `CreateNexlinkUser` query — insert with `ON CONFLICT`, without password/email (Section 11)
+- [ ] `SetNexlinkUserID` repo method — bind Nexlink ID to existing account (Section 11)
+- [ ] `ClearNexlinkUserID` repo method — remove Nexlink binding (Section 11)
+- [ ] `RevokeAllTokens` OAuth2 method — delete all tokens for a user ID (Section 15)
+- [ ] `POST /user/login-nexlink` — verify initData, return `"ok"` or `"unbound"` (Section 12)
+- [ ] `POST /user/bind-nexlink` — verify initData + password, bind to existing account (Section 13)
+- [ ] `POST /user/create-nexlink` — verify initData, create passwordless account (Section 14)
+- [ ] `POST /user/unbind-nexlink` — disconnect Nexlink identity, revoke sessions (Section 15)
+- [ ] `POST /user/set-password` — let initData-created users set username/password/email
+- [ ] Guard `Authenticate` for NULL password_hash — reject passwordless users on password login (Section 16)
+- [ ] Reject `nx_` prefix in `POST /user/register` — reserved for auto-generated usernames (Section 10)
+- [ ] Dual-mode login page — detect `window.NexlinkApp`, auto-login with initData or show form/QR (Section 17)
+- [ ] Authorization popup UI — show "Bind existing account" / "Create new account" (Section 17)
+- [ ] Set password UI — settings page for initData-created users (Section 17)
+- [ ] Unbind UI — settings page button to disconnect Nexlink identity (Section 15)
 
-### To be implemented for QR login
+### To be implemented: Security hardening (Part II, Part III)
 
-- [ ] **Nexlink backend: `POST /dapp/qr/create`** — create QR session (scoped to clientId, 2-5min TTL)
-- [ ] **Nexlink backend: `POST /dapp/qr/confirm`** — user confirms login, backend signs initData and stores with token
-- [ ] **Nexlink backend: `GET /dapp/qr/status`** — dApp backend polls for confirmed initData
-- [ ] **Nexlink backend: QR session storage** — table/cache for token → status + initData
-- [ ] **Nexlink app: Deep link handler** — `nexlink://auth/qr?token=&dapp=` scheme parsing
-- [ ] **Nexlink app: QR confirmation dialog** — show dApp name, user name, confirm/cancel
-- [ ] **Nexlink app: Confirm action** — call `POST /dapp/qr/confirm` on Nexlink backend (no external URL)
+- [ ] initData replay prevention — track `query_id` in Redis, reject reused initData (Section 12.2)
+- [ ] Rate limiter on `POST /user/bind-nexlink` — 5 attempts per initData per 10 min + per-IP limit (Section 13.2)
+- [ ] Rate limiter on `POST /user/create-nexlink` — 3 attempts per `nexlink_user_id` per 10 min (Section 14.3)
+- [ ] Account lockout — lock after 10 failed bind attempts; require admin/email reset (Section 13.2)
 
-### To be implemented for Login Widget
+### To be implemented: QR login (Part I, Section 3)
 
-- [ ] **Nexlink backend: `nexlink-login-widget.js`** — hosted embeddable script with environment detection, QR rendering, long-poll loop
-- [ ] **Nexlink backend: CORS configuration** — allow registered dApp domains to call `/dapp/qr/create` and `/dapp/qr/status` from browser
-- [ ] **Nexlink backend: Inline QR SVG generator** — embed lightweight QR encoder in widget (no external dependency)
-- [ ] **Nexlink backend: Widget CSS** — branded, scoped styles with light/dark theme support
-- [ ] **Nexlink backend: Static asset serving** — serve widget JS from `/static/nexlink-login-widget.js` with cache headers and SRI hash
+- [ ] Nexlink backend: `POST /dapp/qr/create` — create QR session (scoped to clientId, 2-5min TTL)
+- [ ] Nexlink backend: `POST /dapp/qr/confirm` — user confirms login, backend signs initData and stores with token
+- [ ] Nexlink backend: `GET /dapp/qr/status` — dApp backend polls for confirmed initData
+- [ ] Nexlink backend: QR session storage — table/cache for token → status + initData
+- [ ] Nexlink app: Deep link handler — `nexlink://auth/qr?token=&dapp=` scheme parsing
+- [ ] Nexlink app: QR confirmation dialog — show dApp name, user name, confirm/cancel
+- [ ] Nexlink app: Confirm action — call `POST /dapp/qr/confirm` on Nexlink backend (no external URL)
 
-### To be implemented for general improvements
+### To be implemented: Login Widget (Part I, Section 7)
+
+- [ ] Nexlink backend: `nexlink-login-widget.js` — hosted embeddable script with environment detection, QR rendering, long-poll loop
+- [ ] Nexlink backend: CORS configuration — allow registered dApp domains to call `/dapp/qr/create` and `/dapp/qr/status` from browser
+- [ ] Nexlink backend: Inline QR SVG generator — embed lightweight QR encoder in widget (no external dependency)
+- [ ] Nexlink backend: Widget CSS — branded, scoped styles with light/dark theme support
+- [ ] Nexlink backend: Static asset serving — serve widget JS from `/static/nexlink-login-widget.js` with cache headers and SRI hash
+
+### To be implemented: Scalability (Part III, Section 21)
+
+- [ ] Redis pub/sub for QR status — replace ticker-based polling with `SUBSCRIBE qr:{token}` channel
+- [ ] SSE endpoint for QR status — upgrade to Server-Sent Events
+- [ ] Connection-count monitoring — track concurrent QR long-poll connections; alert when approaching limits
+
+### To be implemented: General improvements
 
 - [ ] `NexlinkApp.version` — currently hardcoded as `'0.0.0'`, should reflect real app version
 - [ ] `NexlinkApp.checkVersion()` / `NexlinkApp.requestUpgrade()` — stub only
@@ -1583,7 +1894,7 @@ The widget JS file is served from the Nexlink backend's static assets. Core stru
 
 ---
 
-## 12. References
+## 23. References
 
 - [Nexlink Mini App Spec](../docs/NEXLINK_MINIAPP_SPEC.md) — full JS SDK and API specification
 - [Nexlink Architecture](../docs/architecture-README.md) — app versioning and upgrade system
