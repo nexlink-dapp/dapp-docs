@@ -21,7 +21,7 @@ NexLink is a mobile wallet and messaging app with a built-in dApp browser. Third
 All capabilities work through two channels:
 
 - **In-app** — dApp runs inside NexLink's WebView with full SDK access (`window.NexlinkApp`)
-- **External browser** — dApp runs in Chrome/Safari with QR code flows for auth, payments, and contract calls
+- **External browser** — dApp runs in Chrome/Safari with QR code flows for payments and contract calls (QR auth is planned but not yet implemented — see [AUTH.md Section 3.1](AUTH.md))
 
 ---
 
@@ -34,20 +34,23 @@ Contact the NexLink platform administrator to register your dApp. You will recei
 | Credential | Purpose |
 |---|---|
 | `dapp_id` | Numeric identifier for your dApp |
-| `secret_key` | Used for initData signature verification |
-| `api_key` | Used for backend API authentication (`Bearer <api_key>`) |
+| `secret_key` | Used for initData signature verification and API request signing (MD5 signature) |
 
 ### 2. Choose Your Integration
 
 **Minimal integration (auth only):**
 
 ```javascript
-// In-app: identity is available immediately
-const initData = window.NexlinkApp.initData;
-// Send to your backend for verification
-const res = await fetch('/api/login', {
-  method: 'POST',
-  body: JSON.stringify({ initData })
+// In-app: wait for SDK to be ready, then read initData
+NexlinkApp.onReady(async function () {
+  const initData = NexlinkApp.initData;
+  if (!initData) return; // not in Nexlink app
+
+  // Send to your backend for verification
+  const res = await fetch('/api/login', {
+    method: 'POST',
+    body: JSON.stringify({ initData })
+  });
 });
 ```
 
@@ -131,7 +134,7 @@ flowchart TB
 | Payment (direct) | `NexlinkApp.payment.transfer()` | Not available |
 | Payment (order) | `NexlinkApp.payment.pay()` | QR code → long-poll |
 | Contract (write) | `NexlinkApp.contract.call()` | QR code → long-poll |
-| Contract (read) | `NexlinkApp.contract.read()` | Via `window.ethereum` or direct RPC |
+| Contract (read) | `NexlinkApp.contract.read()` | Direct RPC call to NEXLK chain |
 | EIP-1193 provider | `window.ethereum` | Not available |
 
 ### NEXLK Chain
@@ -154,7 +157,34 @@ flowchart TB
 
 ## JS SDK Reference
 
-The NexLink SDK is injected as `window.NexlinkApp` when a dApp runs inside the NexLink app.
+### SDK Availability
+
+The NexLink SDK (`window.NexlinkApp`) is **auto-injected** by the NexLink WebView when a dApp loads inside the app. No `<script>` tag is needed — the app injects the SDK via inline JavaScript before the page's own scripts run.
+
+| Environment | `window.NexlinkApp` | `window.ethereum` | How it works |
+|---|---|---|---|
+| **Inside NexLink app** | Available (auto-injected) | Available (auto-injected) | WebView injects SDK at `document_start` — no action needed from the dApp |
+| **External browser** | `undefined` | `undefined` | No NexLink WebView — SDK does not exist |
+
+**There is no external JS file that provides the SDK.** Unlike platforms where you load a `<script src="...">` to get the SDK, NexLink injects everything automatically. Your dApp code simply checks whether `window.NexlinkApp` exists.
+
+For dApps that need to work in both environments, always guard SDK calls:
+
+```javascript
+if (window.NexlinkApp) {
+  // Running inside NexLink app — full SDK access
+  NexlinkApp.onReady(async () => {
+    const initData = NexlinkApp.initData;
+    // use payment, contract, wallet APIs...
+  });
+} else {
+  // Running in a regular browser — no SDK available
+  // Use QR code flows for login, payments, and contract calls
+  // See AUTH.md, PAYMENT.md, CONTRACT.md for QR flow details
+}
+```
+
+> **Note:** A no-op fallback file (`nexlink-sdk.js`) is hosted at `/static/nexlink-sdk.js` on the NexLink API server. It provides stub methods that log warnings instead of crashing. This file is **optional** — it exists only as a development convenience for testing dApp pages in a regular browser without `if (window.NexlinkApp)` guards. It is not needed in production and does not provide any real functionality.
 
 ### Namespaces
 
@@ -163,7 +193,7 @@ The NexLink SDK is injected as `window.NexlinkApp` when a dApp runs inside the N
 | `NexlinkApp` | `.initData` | Signed user identity string |
 | `NexlinkApp.payment` | `.pay()`, `.transfer()`, `.getOrderStatus()` | Token payment operations |
 | `NexlinkApp.contract` | `.call()`, `.read()`, `.encode()` | Smart contract interaction |
-| `NexlinkApp.wallet` | `.sendTransaction()`, `.getAddress()` | Low-level wallet access |
+| `NexlinkApp.wallet` | `.getAccounts()`, `.sendTransaction()`, `.personalSign()`, etc. | Low-level wallet access (8 methods) |
 | `window.ethereum` | EIP-1193 standard methods | Standard Web3 provider |
 
 ### Detection
@@ -171,14 +201,21 @@ The NexLink SDK is injected as `window.NexlinkApp` when a dApp runs inside the N
 ```javascript
 // Check if running inside NexLink app
 if (window.NexlinkApp) {
-  // Full SDK available
-  const initData = NexlinkApp.initData;
+  // Full SDK available — auto-injected by WebView
+  NexlinkApp.onReady(() => {
+    const initData = NexlinkApp.initData;
+  });
+} else {
+  // External browser — window.NexlinkApp is undefined
+  // Fall back to QR code flows
 }
 
-// Check specific capabilities
-if (NexlinkApp.payment) { /* payment methods available */ }
-if (NexlinkApp.contract) { /* contract methods available */ }
-if (window.ethereum) { /* EIP-1193 provider available */ }
+// Check specific capabilities (only after confirming NexlinkApp exists)
+if (window.NexlinkApp) {
+  if (NexlinkApp.payment) { /* payment methods available */ }
+  if (NexlinkApp.contract) { /* contract methods available */ }
+}
+if (window.ethereum) { /* EIP-1193 provider available (in-app only) */ }
 ```
 
 > For complete method signatures and parameters, see [API Reference](API.md).

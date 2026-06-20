@@ -58,6 +58,10 @@ This document serves two audiences:
 
 When a user opens a dApp inside the Nexlink app, login is **fully automatic** — zero user interaction required.
 
+> **SDK injection:** The NexLink WebView injects `window.NexlinkApp` and `window.ethereum` automatically via inline JavaScript at `document_start`. **No `<script>` tag is needed in your HTML.** The SDK is available by the time your page scripts run. Use `NexlinkApp.onReady(cb)` to wait for `initData` to be loaded (it may still be fetching from the server).
+>
+> In external browsers (Chrome, Safari, etc.), `window.NexlinkApp` is `undefined` — see [Section 3](#3-login-flow-general-browser-qr-code-scan) for the QR code fallback.
+
 ### Detailed injection pipeline
 
 ```mermaid
@@ -125,13 +129,13 @@ sequenceDiagram
 ### dApp frontend code (in-app)
 
 ```html
-<script src="https://nexlink-api/static/nexlink-sdk.js"></script>
 <script>
+  // The SDK is auto-injected by the NexLink WebView — no <script> tag needed.
   // Wait for SDK to be ready (initData may still be loading)
   NexlinkApp.onReady(async function () {
     const initData = NexlinkApp.initData;
     if (!initData) {
-      // Not running inside Nexlink app — show QR login instead
+      // Not running inside NexLink app — show QR login instead
       showQrLogin();
       return;
     }
@@ -156,7 +160,7 @@ sequenceDiagram
 
 ## 3. Login Flow: General Browser (QR Code Scan)
 
-When a user visits a dApp URL in a regular browser (not inside the Nexlink app), there is no `window.NexlinkApp` object. The dApp must fall back to a **QR code login flow**.
+When a user visits a dApp URL in a regular browser (not inside the Nexlink app), `window.NexlinkApp` is `undefined` — the SDK is only injected by the NexLink WebView. The dApp must detect this and fall back to a **QR code login flow**.
 
 ```mermaid
 sequenceDiagram
@@ -185,31 +189,29 @@ sequenceDiagram
 
 **The Nexlink app never touches any external URL.** It only talks to the Nexlink backend. The QR code contains no callback URL — only a token and dApp ID. This eliminates the `callback=https://evil.com` attack vector entirely.
 
-### 3.1. QR Code Login Protocol (To Be Implemented)
-
-> **Status:** This entire QR login flow is a design proposal. No code exists yet in the Nexlink app or backend. The existing QR scanner in the app (`home_logic.dart` → `MobileScannerController`) can decode QR images but has no deep link handler for `nexlink://auth/qr`. The existing QR code display in the dApp browser (`dapp_browser_dialogs.dart` → `showQrCode`) only shows the dApp's domain URL, not an auth token.
+### 3.1. QR Code Login Protocol
 
 #### Step 1: dApp backend creates QR session via Nexlink API
 
-The dApp backend (not the browser) requests a QR login session from the **Nexlink backend**:
+The dApp backend (not the browser) requests a QR login session from the **Nexlink backend**. The dApp is identified by the MD5 signature auth headers (`dapp_id`, `request_time`, `sign`), not by a request body field.
 
 ```
 POST https://nexlink-api/dapp/qr/create
-Authorization: Bearer <dapp_api_key>
-{ "clientId": 42 }
+Headers: dapp_id, request_time, sign (MD5 signature auth)
+{ "expireSeconds": 300 }
 
-→ { "qrToken": "abc123...", "expiresAt": 1718700000 }
+→ { "sessionToken": "abc123...", "dappId": "my_dapp", "status": 1, "expireAt": 1718700000 }
 ```
 
-- `qrToken` is a one-time random token (UUID), valid for 2-5 minutes.
-- Stored in the Nexlink backend's database, scoped to `clientId` (dApp ID).
+- `sessionToken` is a one-time random token (UUID), valid for the requested duration (default from server config).
+- Stored in the Nexlink backend's `nexlink_qr_auth_session` table, scoped to the authenticated dApp.
 - The dApp backend forwards the token to the browser.
 
 #### Step 2: Browser displays QR code and polls dApp backend
 
 ```js
 // Detect environment
-if (window.NexlinkApp && NexlinkApp.initData) {
+if (window.NexlinkApp && window.NexlinkApp.platform === 'flutter' && NexlinkApp.initData) {
   // In-app: use initData directly
   loginWithInitData(NexlinkApp.initData);
 } else {
@@ -219,35 +221,36 @@ if (window.NexlinkApp && NexlinkApp.initData) {
 
 async function showQrLogin() {
   // dApp backend proxied the /dapp/qr/create call
-  const { qrToken, expiresAt } = await fetch('/api/auth/qr/create', {
-    method: 'POST',
-  }).then(r => r.json());
+  const res = await fetch('/api/auth/qr/create', { method: 'POST' }).then(r => r.json());
+  const { sessionToken, expireAt } = res.data || res;
 
-  // QR code contains ONLY token + dApp ID — no callback URL
-  renderQrCode(`nexlink://auth/qr?token=${qrToken}&dapp=42`);
+  // QR code contains ONLY token — no callback URL
+  renderQrCode(`nexlink://auth?token=${sessionToken}`);
 
   // Poll dApp backend (which polls Nexlink backend)
-  pollQrStatus(qrToken);
+  pollQrStatus(sessionToken, expireAt);
 }
 
-async function pollQrStatus(qrToken) {
-  // Long polling: each request blocks for up to ~25s on the server.
-  // When the server responds, immediately reconnect for the next cycle.
-  while (true) {
+async function pollQrStatus(sessionToken, expireAt) {
+  while (Date.now() / 1000 < expireAt) {
     try {
-      const res = await fetch(`/api/auth/qr/status?token=${qrToken}`);
-      const data = await res.json();
+      const res = await fetch('/api/auth/qr/status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionToken }),
+      }).then(r => r.json());
+      const data = res.data || res;
 
-      if (data.status === 'confirmed') {
-        localStorage.setItem('session', data.sessionToken);
-        window.location.href = '/dashboard';
+      if (data.status === 2) {  // confirmed
+        loginWithInitData(data.initData);
         return;
       }
-      if (data.status === 'expired') {
+      if (data.status === 4) {  // expired
         showExpiredMessage();
         return;
       }
-      // status === 'pending' → server held ~25s, loop immediately
+      // status === 1 (pending) → wait 2s then poll again
+      await new Promise(r => setTimeout(r, 2000));
     } catch (e) {
       // Network error — wait 2s then retry
       await new Promise(r => setTimeout(r, 2000));
@@ -261,115 +264,67 @@ async function pollQrStatus(qrToken) {
 The Nexlink mobile app:
 
 1. Opens the built-in QR scanner or camera.
-2. Parses the deep link: `nexlink://auth/qr?token=abc123&dapp=42`.
-3. Fetches dApp info from the Nexlink backend (name, icon) for the confirmation dialog.
-4. Shows a confirmation dialog: _"Log in to [dApp Name] as [Your Name]?"_
+2. Parses the deep link: `nexlink://auth?token=abc123&dapp=my_dapp`.
+3. Calls `POST /browser/qr/info` to fetch dApp info (name, icon, domain) for the confirmation dialog.
+4. Shows a confirmation dialog: _"Log in to [dApp Name]?"_ with the dApp's name and domain.
 5. On confirm, the app calls the **Nexlink backend** (not any external URL):
 
 ```
-POST https://nexlink-api/dapp/qr/confirm
+POST https://nexlink-api/browser/qr/confirm
 Authorization: Bearer <user's nexlinkToken>
 {
-  "qrToken": "abc123",
-  "dappId": 42
+  "sessionToken": "abc123"
 }
 ```
 
-6. The Nexlink backend generates signed `initData` (using the dApp's `secret_key` from the `dapps` table) and stores it alongside the `qrToken`.
+6. The Nexlink backend looks up the user, generates signed `initData` (using the dApp's `secret_key` from the `dapps` table), and stores it on the session row.
 
 #### Step 4: dApp backend polls for result
 
 The dApp backend polls the Nexlink backend for the confirmed initData:
 
 ```
-GET https://nexlink-api/dapp/qr/status?token=abc123&clientId=42
-Authorization: Bearer <dapp_api_key>
+POST https://nexlink-api/dapp/qr/status
+Headers: dapp_id, request_time, sign (MD5 signature auth)
+{ "sessionToken": "abc123" }
 
-→ pending:   { "status": "pending" }
-→ confirmed: { "status": "confirmed", "initData": "user=%7B...%7D&hash=..." }
-→ expired:   { "status": "expired" }
+→ pending:   { "sessionToken": "abc123", "dappId": "my_dapp", "status": 1, "expireAt": 1718700000 }
+→ confirmed: { "sessionToken": "abc123", "dappId": "my_dapp", "status": 2, "initData": "user=%7B...%7D&hash=...", "expireAt": 1718700000 }
+→ expired:   { "sessionToken": "abc123", "dappId": "my_dapp", "status": 4, "expireAt": 1718700000 }
 ```
 
-On `confirmed`, the dApp backend:
+Status codes: `1` = pending, `2` = confirmed, `3` = failed, `4` = expired.
+
+On status `2` (confirmed), the dApp backend:
 
 1. **Verifies initData** signature (Mode A with local secret, or trust it since it came from Nexlink API over authenticated channel).
 2. **Looks up user** by `nexlink_user_id`. If not found, returns `"unbound"` — the dApp handles binding or account creation (see Section 13 for danbao's implementation, or implement your own).
 3. **Issues its own session token** (OAuth2 token, JWT, etc.).
 4. Returns the session token to the browser (via the browser's poll to `/api/auth/qr/status`).
 
-The Nexlink backend's `GET /dapp/qr/status` endpoint supports **long polling**: it holds the connection for up to 25 seconds, returning immediately only when the status changes (confirmed/expired) or the hold times out (returns pending). This means the dApp backend's proxy handler is a simple pass-through — no polling loop needed on the dApp side.
+The dApp backend proxies the `POST /dapp/qr/status` call to the Nexlink backend. The current implementation uses short polling (the browser polls every 2 seconds). A future upgrade to long polling or SSE is tracked in Section 24.
 
 ```js
-// dApp backend (Node.js example) — proxies Nexlink long-poll
-app.get('/api/auth/qr/status', async (req, res) => {
-  // Single request to Nexlink backend — it holds for up to 25s
-  const nexlink = await fetch(
-    `${NEXLINK_API}/dapp/qr/status?token=${req.query.token}&clientId=${MY_CLIENT_ID}`,
-    { headers: { 'Authorization': `Bearer ${DAPP_API_KEY}` } }
-  ).then(r => r.json());
+// dApp backend (Node.js example) — proxies Nexlink status poll
+app.post('/api/auth/qr/status', async (req, res) => {
+  const { sessionToken } = req.body;
+  const nexlink = await nexlinkApi.post('/dapp/qr/status', { sessionToken });
+  const data = nexlink.data || nexlink;
 
-  if (nexlink.status === 'confirmed') {
+  if (data.status === 2) {  // confirmed
     // Verify and create session
-    const result = verifyNexlinkInitData(nexlink.initData, process.env.NEXLINK_DAPP_SECRET);
+    const result = verifyNexlinkInitData(data.initData, process.env.NEXLINK_DAPP_SECRET);
     if (!result.valid) return res.status(401).end();
 
     const user = await db.upsertUser({ nexlinkId: result.user.id });
-    const sessionToken = createJWT({ sub: user.id });
+    const token = createJWT({ sub: user.id });
 
-    return res.json({ status: 'confirmed', sessionToken });
+    return res.json({ status: 2, sessionToken: token });
   }
 
-  // 'pending' (hold timed out) or 'expired' — browser will reconnect
-  res.json({ status: nexlink.status });
+  // status 1 (pending) or 4 (expired) — browser will poll again
+  res.json({ status: data.status });
 });
-```
-
-**Nexlink backend long-poll implementation (Go):**
-
-```go
-// GET /dapp/qr/status?token=abc123&clientId=42
-func (h *Handler) QrStatus(w http.ResponseWriter, r *http.Request) {
-    token := r.URL.Query().Get("token")
-    clientID := r.URL.Query().Get("clientId")
-
-    // Validate dApp API key + clientId ownership (omitted for brevity)
-
-    deadline := time.Now().Add(25 * time.Second)
-    ticker := time.NewTicker(1 * time.Second)
-    defer ticker.Stop()
-
-    for {
-        session, err := h.qrStore.Get(r.Context(), token)
-        if err != nil || session.ClientID != clientID {
-            json.NewEncoder(w).Encode(map[string]string{"status": "expired"})
-            return
-        }
-
-        if session.Status != "pending" {
-            resp := map[string]any{"status": session.Status}
-            if session.Status == "confirmed" {
-                resp["initData"] = session.InitData
-                // One-time read: delete after delivery
-                _ = h.qrStore.Delete(r.Context(), token)
-            }
-            json.NewEncoder(w).Encode(resp)
-            return
-        }
-
-        if time.Now().After(deadline) {
-            // Hold timed out — return pending, client will reconnect
-            json.NewEncoder(w).Encode(map[string]string{"status": "pending"})
-            return
-        }
-
-        select {
-        case <-ticker.C:
-            continue // check again
-        case <-r.Context().Done():
-            return // client disconnected
-        }
-    }
-}
 ```
 
 ---
@@ -503,29 +458,31 @@ POST /dapp/verify
 
 ## 5. Deep Link Format for QR Codes
 
-The QR code displayed to the user encodes a Nexlink deep link. The Nexlink app parses this deep link to identify the QR session and dApp.
+The QR code displayed to the user encodes a Nexlink deep link. The Nexlink app parses this deep link to identify the QR session.
 
 ```
-nexlink://auth/qr?token=<qrToken>&dapp=<dappId>
+nexlink://auth?token=<sessionToken>&dapp=<dappId>
 ```
 
 | Parameter | Required | Description |
 |---|---|---|
-| `token` | yes | One-time QR session token (from Nexlink backend) |
-| `dapp` | yes | dApp ID (for display and initData scoping) |
+| `token` | yes | One-time QR session token (UUID from Nexlink backend) |
+| `dapp` | no | dApp symbol (for routing; the backend resolves dApp info from the session) |
 
 **No callback URL.** The QR code never contains any external URL. The Nexlink app only communicates with the Nexlink backend.
 
-The Nexlink app must register a handler for the `nexlink://auth/qr` scheme that:
+The Nexlink app registers a handler for the `nexlink://auth` scheme (`NexlinkUrlRouter` → `RouteType.auth`) that:
 
-1. Parses the parameters
-2. Fetches dApp info from the Nexlink backend using the `dapp` ID (name, icon for confirmation dialog)
-3. Shows: "Log in to **[dApp Name]** as **[Your Name]**?"
-4. On confirm: calls `POST /dapp/qr/confirm { qrToken, dappId }` on the Nexlink backend — the backend signs initData and stores it with the token
+1. Parses the `token` and `dapp` query parameters
+2. Calls `POST /browser/qr/info { sessionToken }` to fetch dApp info (name, icon, domain) for the confirmation dialog
+3. Shows: "Log in to **[dApp Name]**?" with the dApp's domain
+4. On confirm: calls `POST /browser/qr/confirm { sessionToken }` on the Nexlink backend — the backend looks up the user, signs initData, and stores it on the session row
 
 ---
 
 ## 6. Dual-Mode dApp Template
+
+> **Note:** Both paths are fully implemented. The in-app path uses `window.NexlinkApp.initData` directly; the QR code path uses the `/dapp/qr/create` and `/dapp/qr/status` endpoints.
 
 A complete pattern for dApps that work both inside Nexlink and in external browsers:
 
@@ -644,6 +601,8 @@ try {
 ---
 
 ## 7. Nexlink Login Widget (Hosted Embeddable Script)
+
+> The login widget and all QR login endpoints are implemented. The widget is served at `/static/nexlink-login-widget.js`. For manual integration without the widget, see the **Dual-Mode Template** (Section 6).
 
 The Dual-Mode Template (Section 6) requires each dApp developer to implement QR rendering, long-poll logic, and environment detection themselves. A **hosted login widget** bundles all of this into a single `<script>` tag — similar to Telegram's Login Widget.
 
@@ -1885,23 +1844,24 @@ h.redis.Publish(ctx, "qr:"+token, "confirmed")
 - [ ] Rate limiter on `POST /user/create-nexlink` — 3 attempts per `nexlink_user_id` per 10 min (Section 17.3)
 - [ ] Account lockout — lock after 10 failed bind attempts; require admin/email reset (Section 16.2)
 
-### To be implemented: QR login (Part I, Section 3)
+### Implemented: QR login (Part I, Section 3)
 
-- [ ] Nexlink backend: `POST /dapp/qr/create` — create QR session (scoped to clientId, 2-5min TTL)
-- [ ] Nexlink backend: `POST /dapp/qr/confirm` — user confirms login, backend signs initData and stores with token
-- [ ] Nexlink backend: `GET /dapp/qr/status` — dApp backend polls for confirmed initData
-- [ ] Nexlink backend: QR session storage — table/cache for token → status + initData
-- [ ] Nexlink app: Deep link handler — `nexlink://auth/qr?token=&dapp=` scheme parsing
-- [ ] Nexlink app: QR confirmation dialog — show dApp name, user name, confirm/cancel
-- [ ] Nexlink app: Confirm action — call `POST /dapp/qr/confirm` on Nexlink backend (no external URL)
+- [x] Nexlink backend: `POST /dapp/qr/create` — create QR session (scoped to dappId, configurable TTL)
+- [x] Nexlink backend: `POST /browser/qr/confirm` — user confirms login, backend signs initData and stores with token
+- [x] Nexlink backend: `POST /dapp/qr/status` — dApp backend polls for confirmed initData
+- [x] Nexlink backend: QR session storage — `nexlink_qr_auth_session` table with SELECT FOR UPDATE concurrency control
+- [x] Nexlink app: Deep link handler — `nexlink://auth?token=&dapp=` scheme parsing
+- [x] Nexlink app: QR confirmation dialog — show dApp name, domain, confirm/cancel
+- [x] Nexlink app: Confirm action — call `POST /browser/qr/confirm` on Nexlink backend
+- [x] Nexlink app: QR scanner — handles `nexlink://` URIs scanned from QR codes
 
-### To be implemented: Login Widget (Part I, Section 7)
+### Implemented: Login Widget (Part I, Section 7)
 
-- [ ] Nexlink backend: `nexlink-login-widget.js` — hosted embeddable script with environment detection, QR rendering, long-poll loop
-- [ ] Nexlink backend: CORS configuration — allow registered dApp domains to call `/dapp/qr/create` and `/dapp/qr/status` from browser
-- [ ] Nexlink backend: Inline QR SVG generator — embed lightweight QR encoder in widget (no external dependency)
-- [ ] Nexlink backend: Widget CSS — branded, scoped styles with light/dark theme support
-- [ ] Nexlink backend: Static asset serving — serve widget JS from `/static/nexlink-login-widget.js` with cache headers and SRI hash
+- [x] Nexlink backend: `nexlink-login-widget.js` — hosted embeddable script with environment detection, QR rendering, polling loop
+- [x] Nexlink backend: Inline QR SVG generator — embedded in widget (falls back to text SVG if no QR library)
+- [x] Nexlink backend: Widget CSS — branded, scoped styles with light/dark theme support
+- [x] Nexlink backend: Static asset serving — serve widget JS from `/static/nexlink-login-widget.js` with cache headers and CORS
+- [ ] Nexlink backend: CORS configuration — allow registered dApp domains to call `/dapp/qr/create` and `/dapp/qr/status` from browser (widget calls dApp backend instead, which proxies)
 
 ### To be implemented: Scalability (Part IV, Section 24)
 

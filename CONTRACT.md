@@ -146,16 +146,21 @@ if (window.NexlinkApp && NexlinkApp.contract) {
 Sends a state-changing transaction to a smart contract. Shows a native confirmation UI with decoded function name and arguments. Returns a [ContractCallResult](API.md#contractcallresult).
 
 ```javascript
-const result = await NexlinkApp.contract.call({
-  contract: "0x3d8b4425...",         // Contract address
-  abi: ESCROW_ABI,                    // ABI array
-  method: "freeze",                   // Function name
-  args: [orderId, 10000000, USDK],    // Arguments
-  value: "0"                          // Native token (wei), optional
-});
-
-if (result.status === "sent") {
+try {
+  const result = await NexlinkApp.contract.call({
+    contract: "0x3d8b4425...",         // Contract address
+    abi: ESCROW_ABI,                    // ABI array
+    method: "freeze",                   // Function name
+    args: [orderId, 10000000, USDK],    // Arguments
+    value: "0"                          // Native token (wei), optional
+  });
   console.log("Transaction sent:", result.txHash);
+} catch (e) {
+  if (e.message === "user_rejected") {
+    console.log("User cancelled");
+  } else {
+    console.error("Contract call failed:", e.message);
+  }
 }
 ```
 
@@ -198,24 +203,40 @@ sequenceDiagram
 | `args` | Array | Yes | Function arguments in order |
 | `value` | String | No | Native token value in wei (default `"0"`) |
 
-#### Return Value
+#### Return Value (on success)
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | String | `"sent"`, `"cancelled"`, or `"failed"` |
-| `txHash` | String | Transaction hash (present when `status` is `"sent"`) |
-| `error` | String | Error message (present when `status` is `"failed"`) |
+| `status` | String | Always `"sent"` (Promise only resolves on success) |
+| `txHash` | String | On-chain transaction hash |
 
-#### Error Cases
+#### Error Handling
 
-| Error | Cause | DApp Action |
+On cancellation or failure, the Promise **rejects** with an error. Use `try/catch`:
+
+```javascript
+try {
+  const result = await NexlinkApp.contract.call({
+    contract: ESCROW_ADDRESS,
+    abi: ESCROW_ABI,
+    method: "freeze",
+    args: [orderId, amount, USDK_ADDRESS]
+  });
+  console.log("Transaction sent:", result.txHash);
+} catch (e) {
+  if (e.message === "user_rejected") {
+    // User cancelled — do nothing
+  } else {
+    showError(e.message);
+  }
+}
+```
+
+| Error message | Cause | DApp Action |
 |---|---|---|
-| `"cancelled"` | User tapped Cancel | Show "Transaction cancelled" |
-| `"invalid_contract"` | Contract address invalid | Fix the address |
-| `"invalid_method"` | Method not found in ABI | Check ABI and method name |
-| `"encode_error"` | Args don't match ABI types | Fix argument types |
-| `"insufficient_gas"` | Not enough NKT for gas | Show "Insufficient gas" |
-| `"tx_failed"` | On-chain transaction reverted | Show revert reason if available |
+| `user_rejected` | User tapped Cancel or declined biometric | Show "Transaction cancelled" |
+| `contract, abi, method, and args are required` | Missing parameters | Fix the parameters |
+| ABI encoding errors | Args don't match ABI types | Fix argument types |
 
 ---
 
@@ -388,48 +409,48 @@ sequenceDiagram
     participant NB as NexLink Backend
     participant Chain as NEXLK Chain
 
-    DB->>NB: POST /dapp/contract/create<br/>{contract, data, value, methodName}
-    NB-->>DB: {sessionToken, expiresAt}
+    DB->>NB: POST /dapp/contract/create<br/>{contractAddress, calldata, value, methodName}
+    NB-->>DB: {sessionToken, expireAt}
 
     DB-->>BR: Show QR code<br/>nexlink://contract?token=<sessionToken>&dapp=<id>
 
-    BR->>DB: Poll: GET /contract/status
+    BR->>DB: Poll: POST /dapp/contract/status
     Note over BR: Waiting for scan...
 
     NL->>NL: User scans QR code
-    NL->>NB: GET /dapp/contract/info?token=<sessionToken>
-    NB-->>NL: {contract, data, value, methodName, dappName}
+    NL->>NB: POST /browser/contract/info {sessionToken}
+    NB-->>NL: {contractAddress, calldata, value, methodName}
     NL->>NL: Show contract call confirmation
 
     alt User confirms
         NL->>NL: Biometric unlock
         NL->>Chain: Send transaction (to=contract, data=calldata)
         Chain-->>NL: txHash
-        NL->>NB: POST /dapp/contract/confirm<br/>{sessionToken, txHash}
+        NL->>NB: POST /browser/contract/confirm<br/>{sessionToken, txHash}
         NB-->>NL: OK
     end
 
-    DB->>NB: GET /dapp/contract/status (long-poll)
-    NB-->>DB: {status:"sent", txHash}
+    DB->>NB: POST /dapp/contract/status {sessionToken}
+    NB-->>DB: {status: 2, txHash}
     DB-->>BR: Transaction complete!
 ```
 
 ### Step by Step
 
-1. **DApp backend creates session** — calls `POST /dapp/contract/create` with the contract address, encoded calldata, value, and a human-readable method name. Receives a `sessionToken` (UUID, valid 5 minutes).
+1. **DApp backend creates session** — calls `POST /dapp/contract/create` with `contractAddress`, `calldata`, `value`, and optionally `methodName`. Receives a `sessionToken` (UUID) and `expireAt` timestamp.
 
 2. **Display QR code** — encode the deep link into a QR code:
    ```
    nexlink://contract?token=<sessionToken>&dapp=<dappId>
    ```
 
-3. **Browser polls** — dApp frontend polls its own backend, which calls `GET /dapp/contract/status` (long-poll, 25s hold).
+3. **Browser polls** — dApp frontend polls its own backend, which calls `POST /dapp/contract/status` with `sessionToken`.
 
-4. **User scans QR** — NexLink app parses the deep link, fetches contract call details from `GET /dapp/contract/info`, and shows the confirmation UI.
+4. **User scans QR** — NexLink app parses the deep link, fetches contract call details from `POST /browser/contract/info`, and shows the confirmation UI.
 
-5. **User confirms** — biometric unlock → sign transaction → broadcast → report `txHash` via `POST /dapp/contract/confirm`.
+5. **User confirms** — biometric unlock → sign transaction → broadcast → report `txHash` via `POST /browser/contract/confirm`.
 
-6. **DApp receives result** — long-poll returns `"sent"` with `txHash`.
+6. **DApp receives result** — status query returns `status: 2` (confirmed) with `txHash`.
 
 ### Deep Link Format
 
@@ -452,18 +473,22 @@ When the contract session expires, create a new session (`POST /dapp/contract/cr
 // Browser-side polling pseudocode
 async function pollContractStatus(sessionToken) {
   while (true) {
-    const res = await fetch(`/api/contract/status?token=${sessionToken}`);
+    const res = await fetch(`/api/contract/status`, {
+      method: 'POST',
+      body: JSON.stringify({ sessionToken }),
+    });
     const data = await res.json();
 
-    if (data.status === "sent") {
-      showSuccess(data.txHash);
+    if (data.data.status === 2) {  // confirmed
+      showSuccess(data.data.txHash);
       return;
     }
-    if (data.status === "expired") {
+    if (data.data.status === 4) {  // expired
       showExpiredUI();    // "QR expired — click to refresh"
       return;
     }
-    // status === "pending" → loop again immediately
+    // status === 1 (pending) → wait and poll again
+    await new Promise(r => setTimeout(r, 3000));
   }
 }
 ```
@@ -548,15 +573,15 @@ const allowance = await NexlinkApp.contract.read({
 
 // Step 2: Approve if needed (user sees confirmation #1)
 if (allowance < amount) {
-  const approveResult = await NexlinkApp.contract.call({
-    contract: USDK_ADDRESS,
-    abi: ERC20_ABI,
-    method: "approve",
-    args: [ESCROW_ADDRESS, amount]
-  });
-
-  if (approveResult.status !== "sent") {
-    console.log("Approve cancelled or failed");
+  try {
+    await NexlinkApp.contract.call({
+      contract: USDK_ADDRESS,
+      abi: ERC20_ABI,
+      method: "approve",
+      args: [ESCROW_ADDRESS, amount]
+    });
+  } catch (e) {
+    console.log("Approve cancelled or failed:", e.message);
     return;
   }
 
@@ -697,29 +722,30 @@ flowchart LR
 
 ### NexLink Backend (Go)
 
-- [ ] `DappContractSession` model — `sessionToken`, `contract`, `data`, `value`, `methodName`, `expiresAt`, `status`
-- [ ] `POST /dapp/contract/create` — create contract call session for QR flow
-- [ ] `GET /dapp/contract/info` — return contract call details for scanned QR
-- [ ] `POST /dapp/contract/confirm` — user confirms QR contract call
-- [ ] `GET /dapp/contract/status` — long-poll for QR contract call result
+- [x] `ContractSession` model — `sessionToken`, `contractAddress`, `calldata`, `value`, `methodName`, `expireAt`, `status`
+- [x] `ContractSessionService` — business logic (create, info, confirm, status)
+- [x] `POST /dapp/contract/create` — create contract call session for QR flow (MD5 auth)
+- [x] `POST /browser/contract/info` — return contract call details for scanned QR (JWT auth)
+- [x] `POST /browser/contract/confirm` — user confirms QR contract call (JWT auth)
+- [x] `POST /dapp/contract/status` — query contract call session status (MD5 auth)
 
 ### NexLink App (Dart)
 
-- [ ] `ContractModule` bridge module (`contract_module.dart`)
-- [ ] Bridge handler: `nexlink_contract_call` (write call)
-- [ ] Bridge handler: `nexlink_contract_read` (read call)
-- [ ] Bridge handler: `nexlink_contract_encode` (calldata encode)
-- [ ] ABI encoder/decoder (extend existing `_selector`, `_padAddress`, `_padUint256`)
-- [ ] Decoded contract call confirmation UI
-- [ ] Deep link handler: `nexlink://contract` scheme
+- [x] `ContractModule` bridge module (`contract_module.dart`)
+- [x] Bridge handler: `nexlink_contract_call` (write call)
+- [x] Bridge handler: `nexlink_contract_read` (read call)
+- [x] Bridge handler: `nexlink_contract_encode` (calldata encode)
+- [x] `AbiCodec` — ABI encoder/decoder (`abi_codec.dart` in `nexlink_wallet`)
+- [x] `BridgeRpcHelper` — shared JSON-RPC helper for `eth_call`
+- [x] Decoded contract call confirmation UI
+- [x] Deep link handler: `nexlink://contract?token=<sessionToken>`
 
 ### JS SDK
 
-- [ ] `NexlinkApp.contract.call()` in `_coreSdk`
-- [ ] `NexlinkApp.contract.read()` in `_coreSdk`
-- [ ] `NexlinkApp.contract.encode()` in `_coreSdk`
-- [ ] ABI encoding logic in JavaScript (keccak256 selector + parameter encoding)
-- [ ] Stub SDK contract namespace (for pre-load queuing)
+- [x] `NexlinkApp.contract.call()` in `_coreSdk`
+- [x] `NexlinkApp.contract.read()` in `_coreSdk`
+- [x] `NexlinkApp.contract.encode()` in `_coreSdk`
+- [x] Stub SDK contract namespace (for pre-load queuing)
 
 ### Documentation
 

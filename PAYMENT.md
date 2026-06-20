@@ -117,24 +117,35 @@ sequenceDiagram
 | `amount` | String | Yes | Human-readable amount (e.g., `"100.00"`, `"0.5"`) |
 | `token` | String | Yes | Token symbol: `"USDK"` or `"CNYT"` |
 
-### Return Value
+### Return Value (on success)
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | String | `"sent"`, `"cancelled"`, or `"failed"` |
-| `txHash` | String | Transaction hash (present when `status` is `"sent"`) |
-| `error` | String | Error message (present when `status` is `"failed"`) |
+| `status` | String | Always `"sent"` (Promise only resolves on success) |
+| `txHash` | String | On-chain transaction hash |
 
-### Error Cases
+### Error Handling
 
-| Error | Cause | DApp Action |
+On cancellation or failure, the Promise **rejects** with an error. Use `try/catch`:
+
+```javascript
+try {
+  const result = await NexlinkApp.payment.transfer({ to, amount, token });
+  console.log("Sent:", result.txHash);
+} catch (e) {
+  if (e.message === "user_rejected") {
+    // User cancelled — do nothing
+  } else {
+    showError(e.message);
+  }
+}
+```
+
+| Error message | Cause | DApp Action |
 |---|---|---|
-| `"cancelled"` | User tapped Cancel | Show "Payment cancelled" |
-| `"insufficient_balance"` | Not enough tokens | Show balance and suggest top-up |
-| `"invalid_address"` | `to` is not a valid address | Fix the address |
-| `"invalid_token"` | Token symbol not recognized | Use `"USDK"` or `"CNYT"` |
-| `"invalid_amount"` | Amount is zero, negative, or malformed | Fix the amount |
-| `"tx_failed"` | On-chain transaction reverted | Retry or contact support |
+| `user_rejected` | User tapped Cancel or declined biometric | Show "cancelled" or do nothing |
+| `to, amount, and token are required` | Missing parameters | Fix the parameters |
+| `unsupported token: X` | Token symbol not recognized | Use `"USDK"` or `"CNYT"` |
 
 ### Example: Tip Button
 
@@ -146,18 +157,19 @@ async function sendTip(recipientAddress, amount) {
     return;
   }
 
-  const result = await NexlinkApp.payment.transfer({
-    to: recipientAddress,
-    amount: amount,
-    token: "USDK"
-  });
-
-  if (result.status === "sent") {
+  try {
+    const result = await NexlinkApp.payment.transfer({
+      to: recipientAddress,
+      amount: amount,
+      token: "USDK"
+    });
     showSuccess(`Tip sent! TX: ${result.txHash}`);
-  } else if (result.status === "cancelled") {
-    // User cancelled — do nothing
-  } else {
-    showError(`Transfer failed: ${result.error}`);
+  } catch (e) {
+    if (e.message === "user_rejected") {
+      // User cancelled — do nothing
+    } else {
+      showError(`Transfer failed: ${e.message}`);
+    }
   }
 }
 ```
@@ -180,20 +192,20 @@ sequenceDiagram
     participant NB as NexLink Backend
     participant Chain as NEXLK Chain
 
-    DB->>NB: POST /dapp/order/create<br/>{amount, symbol, to, callbackUrl}
+    DB->>NB: POST /dapp/order/create<br/>{amount, symbol, recipientAddress, callbackUrl}
     NB-->>DB: {orderId}
     DB-->>DF: orderId
 
     DF->>NL: NexlinkApp.payment.pay({orderId})
-    NL->>NB: Fetch order details
-    NB-->>NL: {amount, symbol, to, dappName}
+    NL->>NB: POST /browser/order/info {orderId}
+    NB-->>NL: {amount, symbol, recipientAddress}
     NL->>NL: Show payment confirmation<br/>"Pay 100.00 USDK to MyShop?"
 
     alt User confirms
         NL->>NL: Biometric unlock
         NL->>Chain: ERC-20 transfer(to, rawAmount)
         Chain-->>NL: txHash
-        NL->>NB: POST /dapp/order/pay {orderId, txHash}
+        NL->>NB: POST /browser/order/mark_paid {orderId, txHash}
         NB-->>NL: order → paid
         NL-->>DF: {status:"paid", txHash:"0x...", orderId}
         NB->>DB: Webhook POST callbackUrl<br/>{orderId, status:2, txHash}
@@ -214,7 +226,7 @@ sequenceDiagram
 
 5. **User confirms** — biometric unlock (fingerprint/face). NexLink wallet builds the ERC-20 `transfer(to, amount)` calldata, signs, and broadcasts to the NEXLK chain.
 
-6. **Report to backend** — NexLink app sends `txHash` to the backend via `POST /dapp/order/pay`. Backend transitions the order to `paid` status.
+6. **Report to backend** — NexLink app sends `txHash` to the backend via `POST /browser/order/mark_paid`. Backend transitions the order to `paid` status.
 
 7. **Result to frontend** — Promise resolves with `{ status: "paid", txHash, orderId }`.
 
@@ -223,13 +235,19 @@ sequenceDiagram
 #### JS SDK Method
 
 ```javascript
-const result = await NexlinkApp.payment.pay({
-  orderId: "nx-uuid-123"   // From POST /dapp/order/create
-});
+try {
+  const result = await NexlinkApp.payment.pay({
+    orderId: "nx-uuid-123"   // From POST /dapp/order/create
+  });
 
-if (result.status === "paid") {
   console.log("Payment complete:", result.txHash);
   // Also wait for webhook on your backend for authoritative confirmation
+} catch (e) {
+  if (e.message === "user_rejected") {
+    // User cancelled
+  } else {
+    console.error("Payment failed:", e.message);
+  }
 }
 ```
 
@@ -239,25 +257,41 @@ if (result.status === "paid") {
 |---|---|---|---|
 | `orderId` | String | Yes | Order UUID from [POST /dapp/order/create](API.md#post-dappordercreate) |
 
-#### Return Value
+#### Return Value (on success)
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | String | `"paid"`, `"cancelled"`, or `"failed"` |
-| `txHash` | String | Transaction hash (present when `status` is `"paid"`) |
+| `status` | String | `"paid"` (Promise only resolves on success) or `"already_processed"` (order was already paid) |
+| `txHash` | String | On-chain transaction hash (present when `status` is `"paid"`) |
 | `orderId` | String | The order UUID |
-| `error` | String | Error message (present when `status` is `"failed"`) |
 
-#### Error Cases
+#### Error Handling
 
-| Error | Cause | DApp Action |
+On cancellation or failure, the Promise **rejects** with an error. Use `try/catch`:
+
+```javascript
+try {
+  const result = await NexlinkApp.payment.pay({ orderId });
+  if (result.status === "paid") {
+    console.log("Payment complete:", result.txHash);
+  } else if (result.status === "already_processed") {
+    console.log("Order was already paid");
+  }
+} catch (e) {
+  if (e.message === "user_rejected") {
+    // User cancelled — do nothing
+  } else {
+    showError(e.message);
+  }
+}
+```
+
+| Error message | Cause | DApp Action |
 |---|---|---|
-| `"cancelled"` | User tapped Cancel | Show "Payment cancelled" |
-| `"order_not_found"` | Invalid `orderId` | Check order creation |
-| `"order_expired"` | Order TTL exceeded | Create a new order |
-| `"order_already_paid"` | Order was already paid | Show success (idempotent) |
-| `"insufficient_balance"` | Not enough tokens | Show balance |
-| `"tx_failed"` | On-chain transaction reverted | Retry or create new order |
+| `user_rejected` | User tapped Cancel or declined biometric | Show "Payment cancelled" |
+| `orderId is required` | Missing `orderId` | Check order creation |
+| Order expired (localized) | Order TTL exceeded | Create a new order |
+| `unsupported token: X` | Token not in registry | Contact support |
 
 ---
 
@@ -275,29 +309,27 @@ sequenceDiagram
 
     DB->>NB: POST /dapp/order/create
     NB-->>DB: {orderId}
-    DB->>NB: POST /dapp/payment/create<br/>{orderId, clientId}
-    NB-->>DB: {payToken, expiresAt}
 
-    DB-->>BR: Show QR code<br/>nexlink://pay?token=<payToken>&dapp=<id>
+    DB-->>BR: Show QR code<br/>nexlink://pay?orderId=<orderId>
 
-    BR->>DB: Poll: GET /payment/status
-    Note over BR: Waiting for scan...
+    BR->>DB: Poll: POST /dapp/order/query
+    Note over BR: Waiting for payment...
 
     NL->>NL: User scans QR code
-    NL->>NB: GET /dapp/payment/info?token=<payToken>
-    NB-->>NL: {orderId, amount, symbol, dappName}
+    NL->>NB: POST /browser/order/info {orderId}
+    NB-->>NL: {amount, symbol, recipientAddress}
     NL->>NL: Show payment confirmation
 
     alt User confirms
         NL->>NL: Biometric unlock
         NL->>Chain: ERC-20 transfer(to, rawAmount)
         Chain-->>NL: txHash
-        NL->>NB: POST /dapp/payment/confirm<br/>{payToken, txHash}
+        NL->>NB: POST /browser/order/mark_paid<br/>{orderId, txHash}
         NB-->>NL: OK
     end
 
-    DB->>NB: GET /dapp/payment/status (long-poll)
-    NB-->>DB: {status:"paid", txHash}
+    DB->>NB: POST /dapp/order/query {orderId}
+    NB-->>DB: {status: 2, txHash}
     DB-->>BR: Payment complete!
     NB->>DB: Webhook POST callbackUrl
 ```
@@ -306,65 +338,60 @@ sequenceDiagram
 
 1. **Create order** — same as in-app: `POST /dapp/order/create`.
 
-2. **Create payment session** — `POST /dapp/payment/create` with `orderId` and `clientId`. Returns a `payToken` (UUID, valid 5 minutes).
-
-3. **Display QR code** — encode the deep link into a QR code:
+2. **Display QR code** — encode the `orderId` into a deep link QR code:
    ```
-   nexlink://pay?token=<payToken>&dapp=<dappId>
+   nexlink://pay?orderId=<orderId>
    ```
-   The QR code contains **no amount, no address, no callback URL** — only the token and dApp ID. All payment details are fetched from the backend after scanning.
+   The QR code contains only the `orderId` (a UUID — not guessable). All payment details are fetched from the backend after scanning.
 
-4. **Browser polls** — dApp frontend polls its own backend, which in turn calls `GET /dapp/payment/status` (long-poll, 25s hold). Possible responses:
-   - `"pending"` — no scan yet, reconnect immediately
-   - `"paid"` — payment complete, includes `txHash`
-   - `"expired"` — `payToken` TTL exceeded, offer refresh
+3. **Browser polls** — dApp frontend polls its own backend, which in turn calls `POST /dapp/order/query` to check order status. When `status` changes to `2` (paid), show success.
 
-5. **User scans QR** — NexLink app parses the deep link, fetches payment details from `GET /dapp/payment/info`, and shows the payment confirmation UI.
+4. **User scans QR** — NexLink app parses the deep link, fetches order details from `POST /browser/order/info`, and shows the payment confirmation UI.
 
-6. **User confirms** — same as in-app: biometric unlock → ERC-20 transfer → broadcast → report `txHash` via `POST /dapp/payment/confirm`.
+5. **User confirms** — same as in-app: biometric unlock → ERC-20 transfer → broadcast → report `txHash` via `POST /browser/order/mark_paid`.
 
-7. **DApp receives result** — long-poll returns `"paid"` with `txHash`. Browser updates to show success.
+6. **DApp receives result** — order query returns `status: 2` with `txHash`. Browser updates to show success.
 
-8. **Webhook** — NexLink backend also delivers webhook to `callbackUrl` (same as in-app).
+7. **Webhook** — NexLink backend also delivers webhook to `callbackUrl` (same as in-app). This is the **authoritative confirmation**.
 
 #### QR Code Expiry & Refresh
 
-When the payment session expires:
+The QR code's validity is tied to the order's `expireAt`. When an order expires:
 
 ```javascript
 // Browser-side polling pseudocode
-async function pollPaymentStatus(payToken) {
+async function pollOrderStatus(orderId) {
   while (true) {
-    const res = await fetch(`/api/payment/status?token=${payToken}`);
+    const res = await fetch(`/api/order/status?orderId=${orderId}`);
     const data = await res.json();
 
-    if (data.status === "paid") {
+    if (data.status === 2) {  // paid
       showSuccess(data.txHash);
       return;
     }
-    if (data.status === "expired") {
-      showExpiredUI();    // "QR expired — click to refresh"
+    if (data.status === 4) {  // expired
+      showExpiredUI();    // "Order expired — click to retry"
       return;
     }
-    // status === "pending" → loop again immediately
+    // status === 1 (pending) → wait and poll again
+    await new Promise(r => setTimeout(r, 3000));
   }
 }
 ```
 
-To refresh, create a new payment session (`POST /dapp/payment/create` with the same `orderId`) and generate a new QR code. The order itself does not expire when the payment session expires.
+To refresh, create a new order (`POST /dapp/order/create`) and generate a new QR code.
 
 #### Deep Link Format
 
 ```
-nexlink://pay?token=<payToken>&dapp=<dappId>
+nexlink://pay?orderId=<orderId>
 ```
 
 | Parameter | Required | Description |
 |---|---|---|
-| `token` | Yes | One-time payment session UUID |
-| `dapp` | Yes | dApp numeric ID |
+| `orderId` | Yes | Nexlink order UUID |
 
-> **Security:** No amount, recipient, or callback in the QR code. Prevents QR code tampering attacks. All sensitive data comes from the NexLink backend.
+> **Security:** The `orderId` is a UUID — not guessable. No amount, recipient, or callback in the QR code. All sensitive data comes from the NexLink backend. Payment still requires user confirmation with biometrics.
 
 ---
 
@@ -396,16 +423,14 @@ stateDiagram-v2
 
 - **Order creation** is idempotent on `(dapp_id, externalOrderId)` when `externalOrderId` is provided. Creating an order with the same value returns the existing order instead of creating a duplicate.
 - **Order payment** is idempotent on `orderId`. Paying an already-paid order returns success with the existing `txHash`.
-- **Payment sessions** are NOT idempotent. Each `POST /dapp/payment/create` generates a new `payToken`. Multiple sessions can exist for the same order (e.g., when user refreshes QR).
 
 ### Expiration
 
 | Component | Default TTL | Configurable? |
 |---|---|---|
 | Order | Set by dApp via `expireSeconds` | Yes (at creation) |
-| Payment session (QR) | 5 minutes | No |
 
-When an order expires, all associated payment sessions also expire. An expired order cannot be paid — the dApp must create a new order.
+An expired order cannot be paid — the dApp must create a new order.
 
 ---
 
@@ -503,8 +528,8 @@ flowchart LR
 |---|---|
 | **Amount integrity** | Order-based: amount defined server-side, frontend only passes `orderId`. Direct: native UI shows exact amount, user must confirm. |
 | **Recipient integrity** | Order-based: recipient set in backend order. Direct: native UI shows full address. |
-| **Replay prevention** | Each `orderId` can only be paid once. Each `payToken` is one-time use. |
-| **QR code safety** | QR contains only `payToken` + `dappId` — no amount, no address, no callback URL. |
+| **Replay prevention** | Each `orderId` can only be paid once. |
+| **QR code safety** | QR contains only `orderId` (UUID) — no amount, no address, no callback URL. |
 | **Webhook authenticity** | HMAC-SHA256 signature with timestamp. dApp verifies before processing. |
 | **On-chain finality** | `txHash` can be independently verified on the NEXLK chain by any party. |
 | **User consent** | Native confirmation UI with biometric unlock. DApp cannot auto-send. |
@@ -524,30 +549,30 @@ flowchart LR
 
 ### NexLink Backend (Go)
 
-- [ ] `POST /dapp/order/pay` — internal endpoint for in-app payment completion
-- [ ] `DappPaymentSession` model — `payToken`, `orderId`, `expiresAt`, `status`
-- [ ] `POST /dapp/payment/create` — create payment session for QR flow
-- [ ] `GET /dapp/payment/info` — return order details for scanned QR
-- [ ] `POST /dapp/payment/confirm` — user confirms QR payment
-- [ ] `GET /dapp/payment/status` — long-poll for QR payment result
-- [ ] Token contract registry (chainId → symbol → contract address)
+- [x] `POST /browser/order/info` — internal endpoint for fetching order details
+- [x] `POST /browser/order/mark_paid` — internal endpoint for in-app payment completion
+- [x] `DappOrder` model with `recipientAddress` field
+- [x] `OrderService` — business logic (create, query, cancel, mark paid)
+- [x] `CallbackDispatcher` — webhook delivery with exponential backoff
+- [x] Token contract registry (chainId → symbol → contract address)
 
 ### NexLink App (Dart)
 
-- [ ] `PaymentModule` bridge module (`payment_module.dart`)
-- [ ] Bridge handler: `nexlink_payment_pay` (order-based)
-- [ ] Bridge handler: `nexlink_payment_transfer` (direct)
-- [ ] Bridge handler: `nexlink_payment_getOrderStatus` (query)
-- [ ] Payment confirmation UI sheet
-- [ ] Deep link handler: `nexlink://pay` scheme
-- [ ] ERC-20 transfer calldata builder (reuse from `WalletModule`)
+- [x] `PaymentModule` bridge module (`payment_module.dart`)
+- [x] Bridge handler: `nexlink_payment_pay` (order-based)
+- [x] Bridge handler: `nexlink_payment_transfer` (direct)
+- [x] Bridge handler: `nexlink_payment_getOrderStatus` (query)
+- [x] `DappOrderClient` — API client for order endpoints
+- [x] Payment confirmation UI sheet
+- [x] Deep link handler: `nexlink://pay?orderId=<orderId>`
+- [x] ERC-20 transfer via `RecordingWalletService.send()`
 
 ### JS SDK
 
-- [ ] `NexlinkApp.payment.pay()` in `_coreSdk`
-- [ ] `NexlinkApp.payment.transfer()` in `_coreSdk`
-- [ ] `NexlinkApp.payment.getOrderStatus()` in `_coreSdk`
-- [ ] Stub SDK payment namespace (for pre-load queuing)
+- [x] `NexlinkApp.payment.pay()` in `_coreSdk`
+- [x] `NexlinkApp.payment.transfer()` in `_coreSdk`
+- [x] `NexlinkApp.payment.getOrderStatus()` in `_coreSdk`
+- [x] Stub SDK payment namespace (for pre-load queuing)
 
 ### Documentation
 
