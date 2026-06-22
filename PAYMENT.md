@@ -436,8 +436,32 @@ sequenceDiagram
 |---|---|
 | **No payer check** | `POST /browser/order/mark_paid` records the `txHash` but does not verify that the on-chain sender matches the order creator |
 | **Order is payer-agnostic** | The order defines *what* to pay (amount, token, recipient) — not *who* pays |
+| **Payer tracked** | The `paid_by_user_id` column records which NexLink user actually paid. The webhook includes `paidByUserId` so the dApp backend can distinguish self-pay from delegated pay. |
 | **On-chain finality** | The `txHash` proves the payment happened regardless of who sent it |
 | **Webhook is authoritative** | danbao backend trusts the webhook confirmation, not the browser |
+
+#### Payer identification
+
+When a friend scans the payment QR code and confirms, the NexLink backend records:
+
+| Field | Where | Value |
+|---|---|---|
+| `paid_by_user_id` | `nexlink_dapp_order` table | Friend's NexLink user ID |
+| `paidByUserId` | Webhook payload | Same value — dApp backend can compare with the order creator |
+| `txHash` | Both | On-chain tx hash — the `from` address is the friend's wallet |
+
+The dApp backend can use `paidByUserId` to detect delegated payments. When `paidByUserId` differs from the expected user (or the order has no associated NexLink user), the payment was delegated.
+
+#### Confirmation UX
+
+When the friend scans the QR code, the NexLink app shows a native confirmation sheet with:
+
+- **dApp name** — fetched from `/browser/order/info` (e.g., "Pay to danbao")
+- **Amount and token** — e.g., "100.00 USDK"
+- **Recipient address** — shortened hex address
+- **Biometric unlock** — required before the on-chain transfer executes
+
+After successful payment, the NexLink app shows a success toast and fires `POST /browser/order/mark_paid` to notify the backend.
 
 #### When this applies
 
@@ -513,7 +537,8 @@ X-Nexlink-Signature: a1b2c3d4e5f6...
   "amount": 10000000,
   "symbol": "USDK",
   "txHash": "0xabc123...",
-  "paidAt": 1718700100
+  "paidAt": 1718700100,
+  "paidByUserId": 42
 }
 ```
 

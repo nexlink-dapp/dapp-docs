@@ -107,6 +107,8 @@ Represents a payment order created by [POST /dapp/order/create](#post-dapporderc
 | `txHash` | String | _Optional._ On-chain transaction hash. Present when `status` is `2`. |
 | `expireAt` | Integer | Unix timestamp when this order expires |
 | `paidAt` | Integer | _Optional._ Unix timestamp when payment was confirmed |
+| `dappName` | String | _Optional._ Name of the dApp that created this order. Present in `/browser/order/info` responses. |
+| `dappIcon` | String | _Optional._ Icon URL of the dApp. Present in `/browser/order/info` responses. |
 
 ---
 
@@ -174,6 +176,7 @@ Payload delivered to the dApp's `callbackUrl` when an order is paid.
 | `symbol` | String | Token symbol (`"USDK"` or `"CNYT"`) |
 | `txHash` | String | On-chain transaction hash |
 | `paidAt` | Integer | Unix timestamp when payment was confirmed |
+| `paidByUserId` | Integer | NexLink user ID of the actual payer. `0` when unknown. Different from the order creator in [delegated payment](PAYMENT.md#43-delegated-payment-pay-on-behalf) scenarios. |
 
 **Headers:**
 
@@ -610,7 +613,7 @@ Marks an order as paid. Called by the **NexLink mobile app** after the user conf
 
 **Side effects:**
 - Transitions order to `paid` (status `2`)
-- Records `txHash` and `paidAt`
+- Records `txHash`, `paidAt`, and `paidByUserId` (the authenticated NexLink user who called this endpoint)
 - Enqueues webhook delivery to `callbackUrl`
 
 ---
