@@ -395,6 +395,66 @@ nexlink://pay?orderId=<orderId>
 
 ---
 
+### 4.3 Delegated Payment (Pay on Behalf)
+
+The order-based payment system does **not enforce payer identity**. The `orderId` is the only thing needed to complete a payment — any NexLink user with sufficient balance can scan the QR code and pay, regardless of who created the order.
+
+This enables a **delegated payment** flow for danbao users who registered via standard username/password (Method 1 in [AUTH.md](AUTH.md)) and do not have a NexLink account:
+
+```mermaid
+sequenceDiagram
+    participant U as User (no NexLink)
+    participant BR as Browser
+    participant DB as dApp Backend
+    participant NB as NexLink Backend
+    participant F as Friend (has NexLink)
+    participant Chain as NEXLK Chain
+
+    U->>BR: Place order on danbao
+    BR->>DB: Create danbao order
+    DB->>NB: POST /dapp/order/create
+    NB-->>DB: {orderId}
+    DB-->>BR: Show QR code<br/>nexlink://pay?orderId=<orderId>
+
+    U->>F: Share QR code (screenshot, in person, etc.)
+
+    F->>F: Scan QR with NexLink app
+    F->>NB: POST /browser/order/info {orderId}
+    NB-->>F: {amount, symbol, recipientAddress}
+    F->>F: Confirm payment (biometric)
+    F->>Chain: ERC-20 transfer
+    Chain-->>F: txHash
+    F->>NB: POST /browser/order/mark_paid
+
+    NB->>DB: Webhook {orderId, status: 2, txHash}
+    DB-->>BR: Order paid!
+```
+
+#### Why this works
+
+| Property | Detail |
+|---|---|
+| **No payer check** | `POST /browser/order/mark_paid` records the `txHash` but does not verify that the on-chain sender matches the order creator |
+| **Order is payer-agnostic** | The order defines *what* to pay (amount, token, recipient) — not *who* pays |
+| **On-chain finality** | The `txHash` proves the payment happened regardless of who sent it |
+| **Webhook is authoritative** | danbao backend trusts the webhook confirmation, not the browser |
+
+#### When this applies
+
+This scenario only arises in the **general browser** context. In the dApp browser (inside the NexLink app), the user always has a NexLink account and wallet — they pay directly.
+
+| Context | User has NexLink? | Payment method |
+|---|---|---|
+| **dApp browser** | Always yes | Direct: `NexlinkApp.payment.pay()` |
+| **General browser** + NexLink account | Yes | QR code: scan with own NexLink app |
+| **General browser** + no NexLink account | No | Delegated: share QR with someone who has NexLink |
+
+#### Wallet recharge
+
+The same principle applies to danbao's internal wallet recharge. Since recharge itself is an on-chain NexLink payment, a user without NexLink can share the recharge QR code with a friend. Once paid, the internal balance is credited to the user's danbao account.
+
+---
+
 ## 5. Order Lifecycle
 
 ### Status Transitions
