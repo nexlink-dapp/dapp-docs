@@ -12,16 +12,21 @@ A URL-encoded query string containing a cryptographically signed user identity. 
 
 **Format:** URL-encoded query string (not JSON)
 
-**Example:**
+**Example** (decoded for readability — the wire format is URL-encoded):
 
 ```
-user=%7B%22id%22%3A12345%2C%22uid%22%3A%22u_abc%22%2C%22nickname%22%3A%22John%22%2C%22avatar%22%3A%22https%3A%2F%2Fcdn.nexlink.app%2Favatar%2F12345.jpg%22%2C%22language_code%22%3A%22en%22%7D&user_id=12345&auth_date=1718700000&dapp_id=42&query_id=550e8400-e29b-41d4-a716-446655440000&hash=a1b2c3d4e5f6...
+user      = {"uid":"79552634","openim_id":"8566642169","nickname":"John","avatar":"https://cdn.nexlink.app/avatar/79552634.jpg","language_code":"en"}
+user_id   = 79552634
+auth_date = 1718700000
+dapp_id   = 42
+query_id  = 550e8400-e29b-41d4-a716-446655440000
+hash      = a1b2c3d4e5f6...
 ```
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `user` | String | Yes | JSON-encoded [User](#user) object |
-| `user_id` | Integer | Yes | Nexlink user ID (same as `user.id`) |
+| `user_id` | String | Yes | The user's permanent `uid` (same as `user.uid`). Use it as the stable key — it is never a sequential id. |
 | `auth_date` | Integer | Yes | Unix timestamp (seconds) when this payload was generated |
 | `dapp_id` | Integer | Yes | Numeric dApp ID |
 | `query_id` | String | Yes | Unique session identifier (UUID), used for replay prevention |
@@ -36,11 +41,13 @@ Represents a Nexlink user identity. Embedded as a JSON string inside [InitData](
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | Integer | Unique Nexlink user ID |
-| `uid` | String | Nexlink string user identifier |
+| `uid` | String | **Permanent, non-sequential** user identifier. Immutable — use this as your primary key for the user. |
+| `openim_id` | String | Chat/session identity. Also stable; useful if you integrate with Nexlink chat. |
 | `nickname` | String | Display name |
 | `avatar` | String | Profile picture URL |
 | `language_code` | String | ISO 639-1 language code (e.g., `"en"`, `"zh"`) |
+
+> **Identify users by `uid`.** It is permanent, immutable, and non-sequential, so it is safe to store as your primary key and cannot be used to guess other users or infer the total user count. Nexlink does **not** expose any sequential internal id.
 
 ---
 
@@ -88,7 +95,7 @@ Returned by [POST /user/login-nexlink](#post-userlogin-nexlink) when the Nexlink
 | Field | Type | Description |
 |---|---|---|
 | `status` | String | `"unbound"` |
-| `nexlinkUser` | Object | `{ id, nickname, avatar }` — display info for the authorization popup |
+| `nexlinkUser` | Object | `{ uid, openim_id, nickname, avatar }` — display info for the authorization popup |
 
 ---
 
@@ -417,10 +424,10 @@ Remote [InitData](#initdata) signature verification. For dApps that prefer not t
   "data": {
     "valid": true,
     "user": {
-      "id": 12345,
-      "uid": "u_abc",
+      "uid": "79552634",
+      "openim_id": "8566642169",
       "nickname": "John",
-      "avatar": "https://cdn.nexlink.app/avatar/12345.jpg"
+      "avatar": "https://cdn.nexlink.app/avatar/79552634.jpg"
     }
   }
 }
@@ -988,7 +995,7 @@ Verifies [InitData](#initdata) and logs in. If the Nexlink user has a linked dan
   "refresh_token": "def456...",
   "token_type": "Bearer",
   "expires_in": 7200,
-  "user": { "id": 1, "username": "john_doe", "nexlink_user_id": 12345 }
+  "user": { "id": 1, "username": "john_doe", "nexlink_user_id": 79552634 }
 }
 ```
 
@@ -997,7 +1004,7 @@ Verifies [InitData](#initdata) and logs in. If the Nexlink user has a linked dan
 ```json
 {
   "status": "unbound",
-  "nexlinkUser": { "id": 12345, "nickname": "John", "avatar": "https://..." }
+  "nexlinkUser": { "uid": "79552634", "openim_id": "8566642169", "nickname": "John", "avatar": "https://..." }
 }
 ```
 
@@ -1031,7 +1038,7 @@ Links a Nexlink identity to an existing danbao account. The user must provide th
   "refresh_token": "def456...",
   "token_type": "Bearer",
   "expires_in": 7200,
-  "user": { "id": 1, "username": "john_doe", "nexlink_user_id": 12345 }
+  "user": { "id": 1, "username": "john_doe", "nexlink_user_id": 79552634 }
 }
 ```
 
@@ -1050,7 +1057,7 @@ Links a Nexlink identity to an existing danbao account. The user must provide th
 
 ### POST /user/create-nexlink
 
-Creates a new passwordless danbao account from a Nexlink identity. The username is auto-generated as `nx_{id}`. Returns a [TokenResponse](#tokenresponse) on success.
+Creates a new passwordless danbao account from a Nexlink identity. The username is auto-generated as `nx_{uid}`. Returns a [TokenResponse](#tokenresponse) on success.
 
 **Authorization:** None
 
@@ -1067,7 +1074,7 @@ Creates a new passwordless danbao account from a Nexlink identity. The username 
   "refresh_token": "def456...",
   "token_type": "Bearer",
   "expires_in": 7200,
-  "user": { "id": 7, "username": "nx_7", "display_name": "John", "nexlink_user_id": 12345 }
+  "user": { "id": 7, "username": "nx_79552634", "display_name": "John", "nexlink_user_id": 79552634 }
 }
 ```
 

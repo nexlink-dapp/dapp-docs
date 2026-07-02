@@ -44,8 +44,8 @@ This document serves two audiences:
 
 | Field | Required | Description |
 |---|---|---|
-| `user` | yes | JSON-stringified user object (`id`, `uid`, `nickname`, `avatar`, `language_code`) |
-| `user_id` | yes | Numeric Nexlink user ID |
+| `user` | yes | JSON-stringified user object (`uid`, `openim_id`, `nickname`, `avatar`, `language_code`) |
+| `user_id` | yes | The user's permanent `uid` (same as `user.uid`) — the stable, non-sequential key; never an internal sequential id |
 | `auth_date` | yes | Unix seconds — server rejects if older than 24h |
 | `dapp_id` | yes | Numeric ID from `dapps` table |
 | `query_id` | yes | Unique per WebView session |
@@ -318,7 +318,7 @@ app.post('/api/auth/qr/status', async (req, res) => {
     const result = verifyNexlinkInitData(data.initData, process.env.NEXLINK_DAPP_SECRET);
     if (!result.valid) return res.status(401).end();
 
-    const user = await db.upsertUser({ nexlinkId: result.user.id });
+    const user = await db.upsertUser({ nexlinkUid: result.user.uid });
     const token = createJWT({ sub: user.id });
 
     return res.json({ status: 2, sessionToken: token });
@@ -951,8 +951,8 @@ POST /api/v1/user/login-nexlink
     │
     ▼
 Backend:
-  1. Verify initData signature → extract nexlink_user_id
-  2. SELECT * FROM users WHERE nexlink_user_id = 12345
+  1. Verify initData signature → extract the nexlink uid (from user_id / user.uid)
+  2. SELECT * FROM users WHERE nexlink_user_id = 79552634
     │
     ├── FOUND → already bound
     │   → sync profile (display_name, avatar_url)
@@ -960,7 +960,7 @@ Backend:
     │   → return { status: "ok", token, user }
     │
     └── NOT FOUND → unbound
-        → return { status: "unbound", nexlinkUser: { id, nickname, avatar } }
+        → return { status: "unbound", nexlinkUser: { uid, openim_id, nickname, avatar } }
 ```
 
 When the frontend receives `"ok"`, the user is logged in. When it receives `"unbound"`, it triggers the authorization popup (Method 4).
@@ -999,10 +999,10 @@ The user can later set a password via `POST /user/set-password` to enable form l
 Once an account has `nexlink_user_id` set, all subsequent Nexlink logins (QR or in-app) skip the popup:
 
 ```
-initData.user.id = 12345
+initData.user.uid = 79552634
     │
     ▼
-SELECT * FROM users WHERE nexlink_user_id = 12345
+SELECT * FROM users WHERE nexlink_user_id = 79552634
     → found: danbao user id=1
     │
     ▼
@@ -1010,7 +1010,7 @@ UPDATE users SET
   display_name = initData.nickname,   -- sync profile
   avatar_url = initData.avatar,
   last_login_at = NOW()
-WHERE nexlink_user_id = 12345
+WHERE nexlink_user_id = 79552634
     │
     ▼
 Issue OAuth2 token → return { status: "ok", token, user }
@@ -1294,7 +1294,7 @@ func (h *Handler) BindNexlink(w http.ResponseWriter, r *http.Request) {
 | `username` | `john_doe` | `john_doe` |
 | `password_hash` | `$2a$10$...` | `$2a$10$...` |
 | `email` | `john@mail.com` | `john@mail.com` |
-| `nexlink_user_id` | **NULL** | **12345** |
+| `nexlink_user_id` | **NULL** | **79552634** |
 
 ### 16.2. Brute-force protection
 
