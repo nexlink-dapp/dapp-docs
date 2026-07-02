@@ -49,6 +49,23 @@ Represents a Nexlink user identity. Embedded as a JSON string inside [InitData](
 
 > **Identify users by `uid`.** It is permanent, immutable, and non-sequential, so it is safe to store as your primary key and cannot be used to guess other users or infer the total user count. Nexlink does **not** expose any sequential internal id.
 
+#### Using Nexlink chat from your dApp
+
+`uid` identifies a user, but it **cannot** address a chat. Nexlink chat runs on OpenIM, and conversations are keyed by **`openim_id`** — so `openim_id` is the value you pass to open a conversation.
+
+From inside the Nexlink in-app browser, open a 1:1 chat (e.g. customer service or a counterparty) by calling the bridge handler with the target user's `openim_id`:
+
+```js
+// WebViewJavascriptBridge convention
+WebViewJavascriptBridge.callHandler(
+  "wvjb_contactCustomService",
+  { contact_id: user.openim_id },   // the OpenIM id of the person to chat with
+  function (res) { /* { ok: true } on success */ }
+);
+```
+
+You get the logged-in user's own `openim_id` from [InitData](#initdata); to chat with **another** user, resolve their `openim_id` from their `uid` via `POST /dapp/user/by_uid` (returns `openimUserId`). Note `openim_id` may be empty for a user not yet provisioned in chat.
+
 ---
 
 ### QrSession
