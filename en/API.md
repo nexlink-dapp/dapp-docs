@@ -813,6 +813,44 @@ Expired:
 
 ---
 
+## Escrow API
+
+Escrow (担保) settles on the deployed **C2C** and **Guarantee** contracts on the NEXLK chain. It introduces **no new platform signing endpoints** — every escrow action is an ordinary contract call:
+
+| Escrow action | In-app | External browser |
+|---|---|---|
+| `approve`, `createTrade` / `createTransaction` / `openGuarantee`, `pay`, `reimburse`, `reclaimTrade` / `reclaimDeposit` | [`NexlinkApp.contract.call()`](#nexlinkappcontractcall) | [`POST /dapp/contract/create`](#post-dappcontractcreate) QR session per action |
+| `getCountTransactions`, `getCase`, status reads | [`NexlinkApp.contract.read()`](#nexlinkappcontractread) | Direct RPC `eth_call` |
+
+For architecture, roles, ABIs, and lifecycle, see [Escrow / Guaranteed Payment](ESCROW.md).
+
+### Deployed contracts (chain `2026777`, current testnet)
+
+| Contract | Address |
+|---|---|
+| C2C | `0x7781D90613061513aF33F99E9161473D76515AD0` |
+| Guarantee | `0x0675Fe67E77F598868F6134eE1Cb9C47337F1e09` |
+| JuryArbitrator | `0x86e43067a077Dea4806C57bfc29de9299122f622` |
+
+> Override addresses per environment. Settlement tokens are USDK / CNYT (5 decimals) — see [Token Registry](PAYMENT.md#2-token-registry).
+
+### Backend correlation record
+
+The escrow money-model is **client-signs, backend-correlates** (see [ESCROW.md Section 8](ESCROW.md#8-backend-correlation)). The dApp backend stores these fields against its own order — this is dApp-side storage, not a platform endpoint:
+
+| Field | Type | Source |
+|---|---|---|
+| `escrowTradeId` | Integer | `getCountTransactions()` snapshotted immediately before the open call |
+| `buyerAddress` / `sellerAddress` | String | AA wallet addresses of each party, captured client-side when they act |
+| `freezeTx` | String | `txHash` of the open (`createTrade` / `openGuarantee`) call |
+| `releaseTx` | String | `txHash` of the release (`pay` / `reclaim`) call |
+
+### Legacy partner-custody correlation
+
+Third-party platforms that custody funds in their own `bytes32`-keyed escrow contract report freeze/release tx hashes for correlation via the dApp's `/external` API (danbao-specific). See [ESCROW.md Section 9](ESCROW.md#9-legacy-single-escrow-abi) for the legacy ABI. First-party escrow does not use this path.
+
+---
+
 ## JS SDK — Payment Methods
 
 These methods are available on `window.NexlinkApp.payment` inside the NexLink dApp browser. They are **not available** in external browsers.
@@ -1136,3 +1174,17 @@ Disconnects a Nexlink identity from a danbao account. Requires the user to be lo
 - Revokes all existing sessions (all tokens invalidated immediately)
 
 > After unbinding, the user can re-bind via the authorization popup on their next Nexlink login.
+
+---
+
+## Proposed APIs (Design)
+
+The following capabilities are documented as **design specs** — their endpoints and SDK namespaces are proposed, not yet implemented. Full request/response shapes live in their respective docs and will be lifted into this reference once built.
+
+| Capability | Proposed surface | Spec |
+|---|---|---|
+| **Subscription** | `NexlinkApp.subscription.*`; `/dapp/subscription/*` + `/browser/subscription/confirm`; subscription webhook | [SUBSCRIPTION.md](SUBSCRIPTION.md#6-proposed-backend-api) |
+| **Governance** | Standard OpenZeppelin Governor / ERC20Votes ABIs via [`NexlinkApp.contract`](#nexlinkappcontractcall); optional indexer endpoints | [GOVERNANCE.md](GOVERNANCE.md#5-using-governance-from-a-dapp) |
+| **NFT issuance** | ERC-721 (normal + soulbound) via [`NexlinkApp.contract`](#nexlinkappcontractcall); optional portal issuance + indexer endpoints | [NFT.md](NFT.md#5-minting-via-the-contract-sdk) |
+
+Governance and NFT issuance require **no new platform endpoints** today — they run on the existing [Contract API](#contract-api). Subscription is the only one that introduces new backend endpoints, all of which follow the existing [MD5-signature auth](#dapp-authentication) and [webhook](PAYMENT.md#6-webhook-callbacks) conventions.

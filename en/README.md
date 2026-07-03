@@ -12,11 +12,15 @@ NexLink is a mobile wallet and messaging app with a built-in dApp browser. Third
 
 ## What Can DApps Do?
 
-| Capability | Description | Docs |
-|---|---|---|
-| **Authentication** | Identify users via signed initData (in-app) or QR code login (browser) | [Login & Registration](AUTH.md) |
-| **Token Payments** | Accept USDK/CNYT payments via order-based or direct transfer flows | [Payment Integration](PAYMENT.md) |
-| **Contract Interaction** | Call any smart contract on the NEXLK chain through the wallet | [Contract Interaction](CONTRACT.md) |
+| Capability | Description | Docs | Status |
+|---|---|---|---|
+| **Authentication** | Identify users via signed initData (in-app) or QR code login (browser) | [Login & Registration](AUTH.md) | Shipped |
+| **Token Payments** | Accept USDK/CNYT payments via order-based or direct transfer flows | [Payment Integration](PAYMENT.md) | Shipped |
+| **Escrow / Guaranteed Payment** | Lock funds until a deal completes; C2C + Guarantee contracts with jury dispute (K币担保) | [Escrow](ESCROW.md) | Shipped |
+| **Subscription Payment** | Recurring billing where the user confirms every charge — no silent auto-deduction | [Subscription](SUBSCRIPTION.md) | Design |
+| **Contract Interaction** | Call any smart contract on the NEXLK chain through the wallet | [Contract Interaction](CONTRACT.md) | Shipped |
+| **NFT Issuance** | Issue normal and soulbound (SBT) ERC-721 tokens | [NFT Issuance](NFT.md) | SDK-ready |
+| **Community Governance** | Stake, propose, and vote; Delegate ID as an NFT (Tally-style DAO) | [Governance](GOVERNANCE.md) | Design |
 
 All capabilities work through two channels:
 
@@ -229,7 +233,11 @@ if (window.ethereum) { /* EIP-1193 provider available (in-app only) */ }
 | [API Reference](API.md) | Types, endpoints, and JS SDK method signatures |
 | [Login & Registration](AUTH.md) | initData, signature verification, QR login, account binding |
 | [Payment Integration](PAYMENT.md) | USDK/CNYT payments — direct transfer and order-based flows |
+| [Escrow / Guaranteed Payment](ESCROW.md) | C2C + Guarantee escrow contracts, roles, jury dispute (K币担保) |
+| [Subscription Payment](SUBSCRIPTION.md) | Confirm-before-charge recurring billing (design spec) |
 | [Contract Interaction](CONTRACT.md) | Smart contract calls — EIP-1193, NexLink SDK, and QR flows |
+| [NFT Issuance](NFT.md) | Normal and soulbound (SBT) ERC-721 issuance and minting |
+| [Community Governance](GOVERNANCE.md) | Staking, proposals, voting, and Delegate ID NFT (design spec) |
 
 ---
 
