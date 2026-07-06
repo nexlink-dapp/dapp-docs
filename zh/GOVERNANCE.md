@@ -2,7 +2,7 @@
 
 > **状态：设计 / 提案模式。** 构建治理所需的平台原语 —— [`NexlinkApp.contract`](CONTRACT.md#3-layer-3-nexlinkappcontract-sdk) 与 [`window.ethereum`](CONTRACT.md#2-layer-1-standard-web3-libraries-eip-1193) —— **今天即可使用**。此处描述的治理智能合约与代言人身份 NFT（Delegate-ID NFT）是 dApp 部署到 NEXLK 链上的**参考设计**；它们尚未成为 NexLink 本身的一部分。下方所有 ABI 均为基于 [OpenZeppelin Governor](https://docs.openzeppelin.com/contracts/governance) 标准（也是 [Tally](https://www.tally.xyz/) 所采用的同一套技术栈）的提案形态。
 
-社区治理（社区管理）让社区能够**质押代币以获得投票权、提交提案并对其进行投票** —— 即一个 DAO。NexLink 借鉴 Tally 的代言人档案，增加了一个特色：**代言人身份（Delegate ID，代言人身份）本身就是一个 NFT** —— 成为代言人会铸造一枚可转让或灵魂绑定的身份代币，该代币承载着代言人的公开声明。
+社区治理（社区管理）让社区能够**质押代币以获得投票权、提交提案并对其进行投票** —— 即一个 DAO。NexLink 借鉴 Tally 的代言人档案，增加了一个特色：**代言人身份（Delegate ID）本身就是一张 NFT** —— 成为代言人会铸造一枚可转让或灵魂绑定的身份代币，该代币承载着代言人的公开声明。
 
 由于每一项操作都是普通的合约调用，治理**不需要任何专用于治理的 SDK** —— 它通过标准的[合约交互](CONTRACT.md)层运行，每一步都由用户签名。
 
