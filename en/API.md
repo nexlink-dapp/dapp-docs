@@ -1184,7 +1184,7 @@ The following capabilities are documented as **design specs** — their endpoint
 | Capability | Proposed surface | Spec |
 |---|---|---|
 | **Subscription** | `NexlinkApp.subscription.*`; `/dapp/subscription/*` + `/browser/subscription/confirm`; subscription webhook | [SUBSCRIPTION.md](SUBSCRIPTION.md#6-proposed-backend-api) |
-| **Governance** | Standard OpenZeppelin Governor / ERC20Votes ABIs via [`NexlinkApp.contract`](#nexlinkappcontractcall); optional indexer endpoints | [GOVERNANCE.md](GOVERNANCE.md#5-using-governance-from-a-dapp) |
+| **Governance** | Standard OpenZeppelin Governor / ERC20Votes ABIs via [`NexlinkApp.contract`](#nexlinkappcontractcall); optional indexer endpoints | [GOVERNANCE.md](GOVERNANCE.md#6-using-governance-from-a-dapp) |
 | **NFT issuance** | ERC-721 (normal + soulbound) via [`NexlinkApp.contract`](#nexlinkappcontractcall); optional portal issuance + indexer endpoints | [NFT.md](NFT.md#5-minting-via-the-contract-sdk) |
 
 Governance and NFT issuance require **no new platform endpoints** today — they run on the existing [Contract API](#contract-api). Subscription is the only one that introduces new backend endpoints, all of which follow the existing [MD5-signature auth](#dapp-authentication) and [webhook](PAYMENT.md#6-webhook-callbacks) conventions.

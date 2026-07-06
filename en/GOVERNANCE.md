@@ -1,8 +1,8 @@
 # NexLink dApp Community Governance
 
-> **Status: Design / Proposed pattern.** The platform primitives needed to build governance — [`NexlinkApp.contract`](CONTRACT.md#3-layer-3-nexlinkappcontract-sdk) and [`window.ethereum`](CONTRACT.md#2-layer-1-standard-web3-libraries-eip-1193) — **ship today**. The governance contracts and Delegate-ID NFT described here are a **reference design** a dApp deploys to the NEXLK chain; they are not yet part of NexLink itself. All ABIs below are proposed shapes based on the [OpenZeppelin Governor](https://docs.openzeppelin.com/contracts/governance) standard (the same stack [Tally](https://www.tally.xyz/) drives).
+> **Status: Design / Proposed pattern.** The platform primitives needed to build governance — [`NexlinkApp.contract`](CONTRACT.md#3-layer-3-nexlinkappcontract-sdk) and [`window.ethereum`](CONTRACT.md#2-layer-1-standard-web3-libraries-eip-1193) — **ship today**. The governance contracts and Delegate-ID NFT described here are a **reference design** a dApp deploys to the NEXLK chain; they are not yet part of NexLink itself. All ABIs below are proposed shapes based on the [OpenZeppelin Governor](https://docs.openzeppelin.com/contracts/governance) standard — the same stack [Tally](https://www.tally.xyz/) drives (Tally has since rebranded to **Cactus**; same platform and URL).
 
-Community governance (社区管理) lets a community **stake tokens for voting power, submit proposals, and vote** on them on-chain — a DAO. NexLink adds one twist inspired by Tally's delegate profiles: a **Delegate ID (代言人身份) is itself an NFT** — becoming a delegate mints a transferable-or-soulbound identity token that carries the delegate's public statement.
+Community governance (社区管理) lets a community **stake tokens for voting power, submit proposals, and vote** on them on-chain — a DAO. NexLink adds one twist inspired by Tally's delegate profiles: a **Delegate ID (代言人身份) is itself an NFT** — becoming a delegate mints a transferable-or-soulbound identity token that carries the delegate's public statement. For communities that want power balanced between capital and contributors, [Section 5](#5-bicameral-governance-house--senate) extends this into a **bicameral (House + Senate)** model where an ERC-20 chamber and an NFT chamber check each other.
 
 Because every action is an ordinary contract call, governance needs **no governance-specific SDK** — it runs through the standard [Contract Interaction](CONTRACT.md) layers, each step signed by the user.
 
@@ -138,6 +138,40 @@ const { txHash } = await NexlinkApp.contract.call({
 
 Displaying the delegate roster is a set of `read` calls: enumerate Delegate ID holders, resolve each `tokenURI`, and pair with `getVotes(delegateAddress)` for received power.
 
+### 3.3 The Delegate ID as a credential gate
+
+The Delegate ID is more than a profile — it is the **eligibility credential** ("议员资格证", a digital congressman's badge). The governance frontend and contracts can require it:
+
+| Gate | Mechanism |
+|---|---|
+| **Roster listing** | Only wallets where `isDelegate(account)` is true appear in the delegate list — you cannot campaign without the NFT |
+| **Delegation target** | The frontend (optionally the token contract) rejects `delegate(to)` unless `isDelegate(to)` — voting power can only flow to credentialed delegates |
+| **Qualification issue** | Minting can be gated: open registration, community election, or a qualification review before `registerDelegate` succeeds |
+| **Revocation** | `resignDelegate` (or a DAO-voted revoke) burns the credential, delisting the delegate |
+
+Issued **soulbound**, the credential cannot be bought or sold — the delegate seat stays with the person who earned it (this is how [Optimism's Citizens' House](#54-real-world-precedents) works).
+
+### 3.4 How voters choose a delegate
+
+Voters pick a delegate from the roster using objective, on-chain metrics — all `read` calls:
+
+| Metric | Source | What it tells a voter |
+|---|---|---|
+| **Participation rate** | Count of `castVote` events vs total proposals | Does this delegate actually show up and vote? |
+| **Voting history** | Past `VoteCast` events (support + reason) | Do their positions match my interests? |
+| **Received voting power** | `getVotes(delegateAddress)` | How much weight the community has already entrusted to them |
+| **Statement** | `tokenURI` JSON (name, bio, platform, links) | Their declared governance platform |
+
+### 3.5 Reputation upgrades (optional)
+
+To keep delegates accountable after they receive power, the Delegate ID can be a **dynamic NFT** — a reputation medal that upgrades with verifiable work:
+
+- Track participation on-chain (e.g. attestation records of consecutive votes cast).
+- When a threshold is met (say, 10 consecutive proposals voted), upgrade the token's tier — its `tokenURI` metadata moves from bronze → silver → gold.
+- Voters can then judge a delegate at a glance: a gold-tier Delegate ID is proof of sustained participation; a stale bronze one signals an absentee.
+
+This turns the roster into a live reputation system instead of a list of promises.
+
 ---
 
 ## 4. Proposals & Voting
@@ -218,7 +252,78 @@ The `proposalId` is deterministic — `keccak256(abi.encode(targets, values, cal
 
 ---
 
-## 5. Using Governance from a dApp
+## 5. Bicameral Governance (House + Senate)
+
+A single token-weighted chamber lets capital alone decide everything. The **bicameral (两院制)** model splits power between two chambers that check each other — the community's NFT and ERC-20 token each carry a distinct political role:
+
+```mermaid
+flowchart TB
+    PROP["Proposal<br/>(either chamber, or jointly)"]
+    PROP --> H & S
+    subgraph H["House 众议院"]
+        H1["Basis: ERC-20 token (ERC20Votes)"]
+        H2["Rule: 1 token = 1 vote"]
+        H3["Represents: capital, market, liquidity"]
+    end
+    subgraph S["Senate 参议院"]
+        S1["Basis: NFT / identity credential (ERC721Votes)"]
+        S2["Rule: 1 NFT = 1 vote — or one person, one vote (soulbound)"]
+        S3["Represents: core contributors, experts, long-termism"]
+    end
+    H --> PASS["Passes only if BOTH chambers approve<br/>(or a chamber holds veto power)"]
+    S --> PASS
+    PASS --> EXEC["Timelock executes on-chain automatically"]
+```
+
+### 5.1 The two chambers
+
+| | **House (众议院)** | **Senate (参议院)** |
+|---|---|---|
+| Voting basis | ERC-20 governance token (ERC20Votes) | NFT / identity credential (ERC721Votes, optionally [soulbound](NFT.md#4-soulbound-tokens-sbt)) |
+| Vote rule | 1 token = 1 vote — more capital, more weight | 1 NFT = 1 vote; soulbound issuance ≈ one person, one vote |
+| Represents | Capital, liquidity providers, market sentiment | Core contributors, experts, the project's long-term values |
+| Typical domain | Economic proposals: fees, emissions, budgets, incentives | Constitutional proposals: protocol upgrades, security parameters, vision |
+
+### 5.2 Checks and balances
+
+| Mechanism | How it works |
+|---|---|
+| **Concurrent majority** | A proposal executes only when it passes **both** chambers — the shared timelock refuses execution until both Governors have approved |
+| **Senate veto** | The House freely passes routine economic proposals, but the Senate can veto a malicious one — e.g. a whale coalition voting to drain the treasury or rewrite core code |
+| **Separated proposal rights** | The House may only originate "money" proposals (treasury, incentives); the Senate may only originate "law" proposals (protocol parameters, constitutional changes) |
+
+Because Senate seats are NFTs — ideally soulbound — capital cannot buy them on the market, which is exactly the attack the veto exists to stop.
+
+### 5.3 Implementation on the standard stack
+
+The model needs no exotic machinery — it is **two Governor contracts + one shared timelock**:
+
+1. **Governor A (House)** — reads voting power from the ERC20Votes token, exactly as in [Section 2](#2-voting-power-stake--delegate).
+2. **Governor B (Senate)** — reads voting power from an **ERC721Votes** NFT. The NFT side supports the same `delegate()` mechanics:
+
+```javascript
+const NFT_VOTES_ABI = [
+  "function delegate(address delegatee)",
+  "function delegates(address account) view returns (address)",
+  "function getVotes(address account) view returns (uint256)",  // = NFT count delegated
+  "function balanceOf(address owner) view returns (uint256)"
+];
+```
+
+3. **Shared TimelockController** — both Governors point at one timelock, wired so a proposal's actions are executed only after **both** chambers have passed and queued it (concurrent-majority gate), with the veto path cancelling a queued operation.
+
+Both chambers surface in the dApp as two voting boards; a user participates in the House, the Senate, or both, depending on what they hold — every action still an ordinary user-signed [contract call](CONTRACT.md#contractcall--write-transactions).
+
+### 5.4 Real-world precedents
+
+| Project | Model |
+|---|---|
+| **Optimism Collective** | The canonical bicameral DAO: the **Token House** (OP, ERC-20) votes on economic/protocol matters, while the **Citizens' House** (non-transferable citizen NFT, one person one vote) allocates retroactive public-goods funding (RPGF). The chambers are independent and check each other. |
+| **Nouns DAO** | Fully NFT-based governance: each Noun NFT is one vote and its voting power is delegable while the NFT stays in the holder's wallet — the pattern the Senate chamber uses. |
+
+---
+
+## 6. Using Governance from a dApp
 
 | Action | Layer | User signs? |
 |---|---|---|
@@ -229,9 +334,11 @@ The `proposalId` is deterministic — `keccak256(abi.encode(targets, values, cal
 
 Because Governor is a standard interface, [Layer 1 (ethers/viem)](CONTRACT.md#2-layer-1-standard-web3-libraries-eip-1193) works unchanged — existing Tally-style frontends can point at the NEXLK chain and NexLink's `window.ethereum` provider with no NexLink-specific code.
 
+> **Off-chain signaling first.** Mature DAOs usually run a free, gasless **signal poll** (Snapshot-style signed messages) to gauge sentiment before spending gas on the binding on-chain vote: signal poll → author the code → on-chain Governor vote → automatic execution. The signal phase is plain message-signing (`personalSign`), so it too needs nothing beyond the existing SDK.
+
 ---
 
-## 6. Security Model
+## 7. Security Model
 
 | Property | Mechanism |
 |---|---|
@@ -241,11 +348,13 @@ Because Governor is a standard interface, [Layer 1 (ethers/viem)](CONTRACT.md#2-
 | **Proposal threshold** | Only holders above a voting-power threshold can propose, limiting spam. |
 | **Sybil resistance via stake** | Voting power is backed by staked tokens; delegate eligibility can require a minimum stake. |
 | **Delegate accountability** | The Delegate ID NFT ties a public statement to an on-chain identity; soulbound issuance prevents selling reputation. |
+| **Whale capture resistance** | [Bicameral mode](#5-bicameral-governance-house--senate): concurrent majority + Senate veto stop a token-whale coalition from unilaterally passing malicious proposals; soulbound Senate seats cannot be bought. |
+| **Governance-attack awareness** | Snapshot voting also blunts flash-loan / borrowed-token voting: power borrowed after the snapshot block counts for nothing. |
 | **Transparent tallies** | Votes and results are on-chain and independently verifiable on chain `2026777`. |
 
 ---
 
-## 7. What Needs Building
+## 8. What Needs Building
 
 Governance runs on the existing contract SDK, but the **contracts and their deployment are the dApp's responsibility** and are not yet authored here:
 
@@ -253,7 +362,8 @@ Governance runs on the existing contract SDK, but the **contracts and their depl
 - [ ] ERC20Votes governance token (or wrap an existing token)
 - [ ] Staking module (`stake`/`unstake`, voting-power accounting, delegate-eligibility gate)
 - [ ] Governor + TimelockController (thresholds, quorum, voting delay/period)
-- [ ] Delegate ID NFT (ERC-721; soulbound option per [NFT.md](NFT.md#4-soulbound-tokens-sbt))
+- [ ] Delegate ID NFT (ERC-721; soulbound option per [NFT.md](NFT.md#4-soulbound-tokens-sbt); credential gating + optional reputation tiers per [Section 3](#3-delegate-id-nft))
+- [ ] Bicameral option: second Governor reading an ERC721Votes NFT (Senate) + shared timelock with concurrent-majority / veto wiring ([Section 5](#5-bicameral-governance-house--senate))
 
 ### Platform SDK — available today
 - [x] `NexlinkApp.contract.call()` / `.read()` cover every governance action

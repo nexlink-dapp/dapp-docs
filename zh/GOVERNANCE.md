@@ -1,8 +1,8 @@
 # NexLink dApp 社区治理（Community Governance）
 
-> **状态：设计 / 提案模式。** 构建治理所需的平台原语 —— [`NexlinkApp.contract`](CONTRACT.md#3-layer-3-nexlinkappcontract-sdk) 与 [`window.ethereum`](CONTRACT.md#2-layer-1-standard-web3-libraries-eip-1193) —— **今天即可使用**。此处描述的治理智能合约与代言人身份 NFT（Delegate-ID NFT）是 dApp 部署到 NEXLK 链上的**参考设计**；它们尚未成为 NexLink 本身的一部分。下方所有 ABI 均为基于 [OpenZeppelin Governor](https://docs.openzeppelin.com/contracts/governance) 标准（也是 [Tally](https://www.tally.xyz/) 所采用的同一套技术栈）的提案形态。
+> **状态：设计 / 提案模式。** 构建治理所需的平台原语 —— [`NexlinkApp.contract`](CONTRACT.md#3-layer-3-nexlinkappcontract-sdk) 与 [`window.ethereum`](CONTRACT.md#2-layer-1-standard-web3-libraries-eip-1193) —— **今天即可使用**。此处描述的治理智能合约与代言人身份 NFT（Delegate-ID NFT）是 dApp 部署到 NEXLK 链上的**参考设计**；它们尚未成为 NexLink 本身的一部分。下方所有 ABI 均为基于 [OpenZeppelin Governor](https://docs.openzeppelin.com/contracts/governance) 标准的提案形态 —— 也是 [Tally](https://www.tally.xyz/) 所采用的同一套技术栈（Tally 现已更名为 **Cactus**；平台与网址不变）。
 
-社区治理（社区管理）让社区能够**质押代币以获得投票权、提交提案并对其进行投票** —— 即一个 DAO。NexLink 借鉴 Tally 的代言人档案，增加了一个特色：**代言人身份（Delegate ID）本身就是一张 NFT** —— 成为代言人会铸造一枚可转让或灵魂绑定的身份代币，该代币承载着代言人的公开声明。
+社区治理（社区管理）让社区能够**质押代币以获得投票权、提交提案并对其进行投票** —— 即一个 DAO。NexLink 借鉴 Tally 的代言人档案，增加了一个特色：**代言人身份（Delegate ID）本身就是一张 NFT** —— 成为代言人会铸造一枚可转让或灵魂绑定的身份代币，该代币承载着代言人的公开声明。对于希望在资本与贡献者之间实现权力制衡的社区，[Section 5](#5-bicameral-governance-house--senate) 将其扩展为**两院制（众议院 + 参议院）**模型：由一个 ERC-20 议院与一个 NFT 议院相互制衡。
 
 由于每一项操作都是普通的合约调用，治理**不需要任何专用于治理的 SDK** —— 它通过标准的[合约交互](CONTRACT.md)层运行，每一步都由用户签名。
 
@@ -138,6 +138,40 @@ const { txHash } = await NexlinkApp.contract.call({
 
 展示代言人名册是一组 `read` 调用：枚举代言人身份持有者、解析各自的 `tokenURI`，并与 `getVotes(delegateAddress)` 配对以得出所接收的投票权。
 
+### 3.3 The Delegate ID as a credential gate
+
+代言人身份不仅是一份档案 —— 它是**资格凭证**（"议员资格证"，数字世界的议员证件）。治理前端与智能合约都可以以它为准入条件：
+
+| 门槛 | 机制 |
+|---|---|
+| **名册展示** | 只有 `isDelegate(account)` 为 true 的钱包才会出现在代言人列表中 —— 没有这枚 NFT 就无法"参选" |
+| **委托对象** | 前端（可选地包括代币合约）在 `isDelegate(to)` 不成立时拒绝 `delegate(to)` —— 投票权只能流向持证代言人 |
+| **资格发放** | 铸造可以设置门槛：开放注册、社区选举，或在 `registerDelegate` 成功前先通过资格审查 |
+| **资格撤销** | `resignDelegate`（或经 DAO 投票的撤销）销毁凭证，将该代言人从名册除名 |
+
+以**灵魂绑定**方式发行时，该凭证无法买卖 —— 代言人席位只属于凭自身贡献获得它的人（[Optimism 的 Citizens' House](#54-real-world-precedents) 正是这样运作的）。
+
+### 3.4 How voters choose a delegate
+
+选民依据客观的链上指标从名册中挑选代言人 —— 全部为 `read` 调用：
+
+| 指标 | 来源 | 告诉选民什么 |
+|---|---|---|
+| **投票参与率** | `castVote` 事件数 vs 提案总数 | 这位代言人是否真的出席并投票？ |
+| **历史投票记录** | 过往 `VoteCast` 事件（立场 + 理由） | 其立场是否符合我的利益？ |
+| **已接收投票权** | `getVotes(delegateAddress)` | 社区已托付给他多少权重 |
+| **治理宣言** | `tokenURI` JSON（姓名、简介、纲领、链接） | 其公开声明的治理主张 |
+
+### 3.5 Reputation upgrades (optional)
+
+为了让代言人在获得权力之后仍保持问责，代言人身份可以是一枚**动态 NFT** —— 随可验证的工作而升级的声誉勋章：
+
+- 在链上记录参与情况（例如连续投票的认证记录）。
+- 达到阈值（比如连续 10 次提案均参与投票）时升级该代币的等级 —— 其 `tokenURI` 元数据从青铜 → 白银 → 黄金。
+- 选民一眼即可判断代言人：黄金级代言人身份是持续参与的证明；停留在青铜的则说明是"僵尸节点"。
+
+这使名册从一页承诺变成一套实时的声誉系统。
+
 ---
 
 ## 4. Proposals & Voting
@@ -218,7 +252,78 @@ const state = await NexlinkApp.contract.read({
 
 ---
 
-## 5. Using Governance from a dApp
+## 5. Bicameral Governance (House + Senate)
+
+单一的按代币计权议院意味着一切由资本单独决定。**两院制**模型将权力拆分为两个相互制衡的议院 —— 社区的 NFT 与 ERC-20 代币各自承担不同的政治权力：
+
+```mermaid
+flowchart TB
+    PROP["Proposal<br/>(either chamber, or jointly)"]
+    PROP --> H & S
+    subgraph H["House 众议院"]
+        H1["Basis: ERC-20 token (ERC20Votes)"]
+        H2["Rule: 1 token = 1 vote"]
+        H3["Represents: capital, market, liquidity"]
+    end
+    subgraph S["Senate 参议院"]
+        S1["Basis: NFT / identity credential (ERC721Votes)"]
+        S2["Rule: 1 NFT = 1 vote — or one person, one vote (soulbound)"]
+        S3["Represents: core contributors, experts, long-termism"]
+    end
+    H --> PASS["Passes only if BOTH chambers approve<br/>(or a chamber holds veto power)"]
+    S --> PASS
+    PASS --> EXEC["Timelock executes on-chain automatically"]
+```
+
+### 5.1 The two chambers
+
+| | **众议院（House）** | **参议院（Senate）** |
+|---|---|---|
+| 投票基础 | ERC-20 治理代币（ERC20Votes） | NFT / 身份凭证（ERC721Votes，可选[灵魂绑定](NFT.md#4-soulbound-tokens-sbt)） |
+| 投票规则 | 1 Token = 1 票 —— 资本越多，话语权越大 | 1 NFT = 1 票；灵魂绑定发行 ≈ 一人一票 |
+| 代表 | 资本、流动性提供者、市场情绪 | 核心贡献者、专家、项目的长期价值观 |
+| 典型职能 | 经济类提案：手续费、代币释放、预算、激励 | 宪法类提案：协议升级、安全参数、长期愿景 |
+
+### 5.2 Checks and balances
+
+| 机制 | 运作方式 |
+|---|---|
+| **双重通过制（Concurrent majority）** | 提案只有在**两院**同时通过后才会执行 —— 共享时间锁在两个 Governor 均批准之前拒绝执行 |
+| **参议院一票否决（Senate veto）** | 众议院可自由通过日常经济提案，但参议院可以否决恶意提案 —— 例如巨鲸联合投票以侵吞国库或改写核心代码 |
+| **提案权分立** | 众议院只能发起"钱"的提案（国库、激励）；参议院只能发起"法"的提案（协议参数、宪法级修改） |
+
+由于参议院席位是 NFT —— 最好是灵魂绑定 —— 资本无法在市场上买到席位，而这正是否决权所要抵御的攻击。
+
+### 5.3 Implementation on the standard stack
+
+该模型不需要任何特殊机制 —— 就是**两个 Governor 合约 + 一个共享时间锁**：
+
+1. **Governor A（众议院）** —— 从 ERC20Votes 代币读取投票权，与 [Section 2](#2-voting-power-stake--delegate) 完全一致。
+2. **Governor B（参议院）** —— 从 **ERC721Votes** NFT 读取投票权。NFT 侧支持同样的 `delegate()` 机制：
+
+```javascript
+const NFT_VOTES_ABI = [
+  "function delegate(address delegatee)",
+  "function delegates(address account) view returns (address)",
+  "function getVotes(address account) view returns (uint256)",  // = NFT count delegated
+  "function balanceOf(address owner) view returns (uint256)"
+];
+```
+
+3. **共享的 TimelockController** —— 两个 Governor 指向同一个时间锁，接线逻辑为：只有在**两院**均已通过并排队后，提案的操作才会被执行（双重通过门槛），否决路径则可取消已排队的操作。
+
+两个议院在 dApp 中呈现为两个投票板块；用户依据自己持有的资产（代币或 NFT）参与众议院、参议院或两者 —— 每一项操作仍然是一次普通的、由用户签名的[合约调用](CONTRACT.md#contractcall--write-transactions)。
+
+### 5.4 Real-world precedents
+
+| 项目 | 模型 |
+|---|---|
+| **Optimism Collective** | 两院制 DAO 的典范：**Token House**（OP，ERC-20）对经济/协议事务投票，而 **Citizens' House**（不可转让的公民 NFT，一人一票）负责分配追溯性公共产品募资（RPGF）。两院相互独立又彼此制衡。 |
+| **Nouns DAO** | 完全基于 NFT 的治理：每个 Noun NFT 即一票，其投票权可在 NFT 留在持有者钱包的同时进行委托 —— 正是参议院议院所采用的模式。 |
+
+---
+
+## 6. Using Governance from a dApp
 
 | 操作 | 层 | 用户签名？ |
 |---|---|---|
@@ -229,9 +334,11 @@ const state = await NexlinkApp.contract.read({
 
 由于 Governor 是标准接口，[第 1 层（ethers/viem）](CONTRACT.md#2-layer-1-standard-web3-libraries-eip-1193)无需改动即可工作 —— 现有的 Tally 风格前端可以指向 NEXLK 链与 NexLink 的 `window.ethereum` provider，无需任何 NexLink 专用代码。
 
+> **先链下民调。** 成熟的 DAO 通常先运行一次免费、免 Gas 的**民意投票**（Snapshot 风格的签名消息）来收集社区意向，然后再为具有约束力的链上投票支付 Gas：民意投票 → 编写代码 → 链上 Governor 投票 → 自动执行。民调阶段只是普通的消息签名（`personalSign`），因此同样无需现有 SDK 之外的任何能力。
+
 ---
 
-## 6. Security Model
+## 7. Security Model
 
 | 属性 | 机制 |
 |---|---|
@@ -241,11 +348,13 @@ const state = await NexlinkApp.contract.read({
 | **提案门槛** | 只有投票权高于门槛的持有者才能发起提案，以限制垃圾提案。 |
 | **通过质押实现抗女巫攻击** | 投票权由质押的代币背书；代言人资格可要求最低质押量。 |
 | **代言人问责** | 代言人身份 NFT 将公开声明与链上身份绑定；灵魂绑定发行可防止出售声誉。 |
+| **抗巨鲸操纵** | [两院制模式](#5-bicameral-governance-house--senate)：双重通过制 + 参议院否决权阻止代币巨鲸联盟单方面通过恶意提案；灵魂绑定的参议院席位无法用钱买到。 |
+| **治理攻击防范意识** | 快照投票同样削弱闪电贷/借币投票：快照区块之后借入的投票权毫无作用。 |
 | **透明计票** | 投票与结果均在链上，可在链 `2026777` 上独立验证。 |
 
 ---
 
-## 7. What Needs Building
+## 8. What Needs Building
 
 治理运行于现有的合约 SDK 之上，但**智能合约及其部署是 dApp 的责任**，此处尚未编写：
 
@@ -253,7 +362,8 @@ const state = await NexlinkApp.contract.read({
 - [ ] ERC20Votes 治理代币（或包装一个现有代币）
 - [ ] 质押模块（`stake`/`unstake`、投票权记账、代言人资格限定）
 - [ ] Governor + TimelockController（门槛、法定人数、投票延迟/投票期）
-- [ ] 代言人身份 NFT（ERC-721；灵魂绑定选项参见 [NFT.md](NFT.md#4-soulbound-tokens-sbt)）
+- [ ] 代言人身份 NFT（ERC-721；灵魂绑定选项参见 [NFT.md](NFT.md#4-soulbound-tokens-sbt)；资格准入 + 可选声誉等级参见 [Section 3](#3-delegate-id-nft)）
+- [ ] 两院制选项：第二个 Governor 读取 ERC721Votes NFT（参议院）+ 共享时间锁的双重通过/否决接线（[Section 5](#5-bicameral-governance-house--senate)）
 
 ### Platform SDK — available today
 - [x] `NexlinkApp.contract.call()` / `.read()` 覆盖每一项治理操作

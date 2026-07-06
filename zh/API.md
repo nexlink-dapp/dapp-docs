@@ -1184,7 +1184,7 @@ const calldata = NexlinkApp.contract.encode({
 | Capability | Proposed surface | Spec |
 |---|---|---|
 | **订阅（Subscription）** | `NexlinkApp.subscription.*`；`/dapp/subscription/*` + `/browser/subscription/confirm`；订阅 Webhook | [SUBSCRIPTION.md](SUBSCRIPTION.md#6-proposed-backend-api) |
-| **治理（Governance）** | 通过 [`NexlinkApp.contract`](#nexlinkappcontractcall) 使用标准 OpenZeppelin Governor / ERC20Votes ABI；可选的索引器接口 | [GOVERNANCE.md](GOVERNANCE.md#5-using-governance-from-a-dapp) |
+| **治理（Governance）** | 通过 [`NexlinkApp.contract`](#nexlinkappcontractcall) 使用标准 OpenZeppelin Governor / ERC20Votes ABI；可选的索引器接口 | [GOVERNANCE.md](GOVERNANCE.md#6-using-governance-from-a-dapp) |
 | **NFT 发行（NFT issuance）** | 通过 [`NexlinkApp.contract`](#nexlinkappcontractcall) 使用 ERC-721（普通 + 灵魂绑定）；可选的门户发行 + 索引器接口 | [NFT.md](NFT.md#5-minting-via-the-contract-sdk) |
 
 治理和 NFT 发行如今**不需要任何新的平台接口**——它们运行在现有的 [Contract API](#contract-api) 上。订阅是唯一引入新后端接口的能力，而所有这些接口都遵循现有的 [MD5 签名认证](#dapp-authentication)和 [Webhook](PAYMENT.md#6-webhook-callbacks) 约定。
