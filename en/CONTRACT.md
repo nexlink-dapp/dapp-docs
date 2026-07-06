@@ -1,10 +1,10 @@
-# NexLink dApp Contract Interaction
+# Contract Interaction
 
 This document describes how dApps interact with their own smart contracts through the NexLink Wallet. It covers ABI-aware SDK calls, standard Web3 library usage, and external browser (QR code) flows.
 
-For endpoint specifications, see [API Reference](API.md#contract-api). For authentication, see [Login & Registration](AUTH.md). For token payments, see [Payment Integration](PAYMENT.md).
+For endpoint specifications, see [API Reference](/broken/pages/zhCmtq6pk3ml84jjhwkN#contract-api). For authentication, see [Login & Registration](AUTH.md). For token payments, see [Payment Integration](PAYMENT.md).
 
----
+***
 
 ## 1. Overview
 
@@ -14,11 +14,11 @@ DApp developers deploy their own smart contracts (escrow, marketplace, token fre
 
 NexLink provides three layers for contract interaction. Choose the one that fits your use case:
 
-| Layer | Interface | DApp encodes calldata? | Confirmation UI | Use case |
-|---|---|---|---|---|
-| **Layer 1** | `window.ethereum` (EIP-1193) | Yes (via ethers.js / viem / web3.js) | Byte count | Standard Web3 — works with any wallet |
-| **Layer 2** | `NexlinkApp.wallet.sendTransaction()` | Yes (manually) | Byte count | Direct bridge call — bypass `window.ethereum` wrapper |
-| **Layer 3** | `NexlinkApp.contract.call()` | No (SDK encodes) | Decoded function name + args | ABI-aware — NexLink handles encoding |
+| Layer       | Interface                             | DApp encodes calldata?               | Confirmation UI              | Use case                                              |
+| ----------- | ------------------------------------- | ------------------------------------ | ---------------------------- | ----------------------------------------------------- |
+| **Layer 1** | `window.ethereum` (EIP-1193)          | Yes (via ethers.js / viem / web3.js) | Byte count                   | Standard Web3 — works with any wallet                 |
+| **Layer 2** | `NexlinkApp.wallet.sendTransaction()` | Yes (manually)                       | Byte count                   | Direct bridge call — bypass `window.ethereum` wrapper |
+| **Layer 3** | `NexlinkApp.contract.call()`          | No (SDK encodes)                     | Decoded function name + args | ABI-aware — NexLink handles encoding                  |
 
 **Choose Layer 1** when you want portability across wallets (MetaMask, WalletConnect, NexLink). Use standard ethers.js or viem — no NexLink-specific code.
 
@@ -36,9 +36,9 @@ flowchart LR
     D --> E[Result returned<br/>to dApp]
 ```
 
-The dApp describes *what* contract function to call, the NexLink app handles authorization through its native UI, and the result flows back to the dApp.
+The dApp describes _what_ contract function to call, the NexLink app handles authorization through its native UI, and the result flows back to the dApp.
 
----
+***
 
 ## 2. Layer 1: Standard Web3 Libraries (EIP-1193)
 
@@ -118,12 +118,12 @@ window.dispatchEvent(new Event('eip6963:requestProvider'));
 
 ### When to Use Layer 1
 
-- Your dApp must work with multiple wallets (MetaMask, WalletConnect, NexLink)
-- You already use ethers.js, viem, or web3.js
-- You want zero NexLink-specific code in your frontend
-- Standard byte-count confirmation UI is acceptable
+* Your dApp must work with multiple wallets (MetaMask, WalletConnect, NexLink)
+* You already use ethers.js, viem, or web3.js
+* You want zero NexLink-specific code in your frontend
+* Standard byte-count confirmation UI is acceptable
 
----
+***
 
 ## 3. Layer 3: NexlinkApp.contract SDK
 
@@ -143,7 +143,7 @@ if (window.NexlinkApp && NexlinkApp.contract) {
 
 ### contract.call() — Write Transactions
 
-Sends a state-changing transaction to a smart contract. Shows a native confirmation UI with decoded function name and arguments. Returns a [ContractCallResult](API.md#contractcallresult).
+Sends a state-changing transaction to a smart contract. Shows a native confirmation UI with decoded function name and arguments. Returns a [ContractCallResult](/broken/pages/zhCmtq6pk3ml84jjhwkN#contractcallresult).
 
 ```javascript
 try {
@@ -195,20 +195,20 @@ sequenceDiagram
 
 #### Parameters
 
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `contract` | String | Yes | Contract address (hex, checksummed) |
-| `abi` | Array | Yes | ABI array (standard Solidity ABI JSON format) |
-| `method` | String | Yes | Function name (e.g., `"freeze"`) |
-| `args` | Array | Yes | Function arguments in order |
-| `value` | String | No | Native token value in wei (default `"0"`) |
+| Parameter  | Type   | Required | Description                                   |
+| ---------- | ------ | -------- | --------------------------------------------- |
+| `contract` | String | Yes      | Contract address (hex, checksummed)           |
+| `abi`      | Array  | Yes      | ABI array (standard Solidity ABI JSON format) |
+| `method`   | String | Yes      | Function name (e.g., `"freeze"`)              |
+| `args`     | Array  | Yes      | Function arguments in order                   |
+| `value`    | String | No       | Native token value in wei (default `"0"`)     |
 
 #### Return Value (on success)
 
-| Field | Type | Description |
-|---|---|---|
+| Field    | Type   | Description                                        |
+| -------- | ------ | -------------------------------------------------- |
 | `status` | String | Always `"sent"` (Promise only resolves on success) |
-| `txHash` | String | On-chain transaction hash |
+| `txHash` | String | On-chain transaction hash                          |
 
 #### Error Handling
 
@@ -232,13 +232,13 @@ try {
 }
 ```
 
-| Error message | Cause | DApp Action |
-|---|---|---|
-| `user_rejected` | User tapped Cancel or declined biometric | Show "Transaction cancelled" |
-| `contract, abi, method, and args are required` | Missing parameters | Fix the parameters |
-| ABI encoding errors | Args don't match ABI types | Fix argument types |
+| Error message                                  | Cause                                    | DApp Action                  |
+| ---------------------------------------------- | ---------------------------------------- | ---------------------------- |
+| `user_rejected`                                | User tapped Cancel or declined biometric | Show "Transaction cancelled" |
+| `contract, abi, method, and args are required` | Missing parameters                       | Fix the parameters           |
+| ABI encoding errors                            | Args don't match ABI types               | Fix argument types           |
 
----
+***
 
 ### contract.read() — View/Pure Calls
 
@@ -273,12 +273,12 @@ sequenceDiagram
 
 #### Parameters
 
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `contract` | String | Yes | Contract address (hex, checksummed) |
-| `abi` | Array | Yes | ABI array |
-| `method` | String | Yes | Function name (must be `view` or `pure`) |
-| `args` | Array | Yes | Function arguments in order |
+| Parameter  | Type   | Required | Description                              |
+| ---------- | ------ | -------- | ---------------------------------------- |
+| `contract` | String | Yes      | Contract address (hex, checksummed)      |
+| `abi`      | Array  | Yes      | ABI array                                |
+| `method`   | String | Yes      | Function name (must be `view` or `pure`) |
+| `args`     | Array  | Yes      | Function arguments in order              |
 
 #### Return Value
 
@@ -303,7 +303,7 @@ const [amount, token, status] = await NexlinkApp.contract.read({
 });
 ```
 
----
+***
 
 ### contract.encode() — Calldata Helper
 
@@ -322,17 +322,17 @@ console.log(calldata);
 
 #### Parameters
 
-| Parameter | Type | Required | Description |
-|---|---|---|---|
-| `abi` | Array | Yes | ABI array |
-| `method` | String | Yes | Function name |
-| `args` | Array | Yes | Function arguments in order |
+| Parameter | Type   | Required | Description                 |
+| --------- | ------ | -------- | --------------------------- |
+| `abi`     | Array  | Yes      | ABI array                   |
+| `method`  | String | Yes      | Function name               |
+| `args`    | Array  | Yes      | Function arguments in order |
 
 #### Return Value
 
 Returns the hex-encoded calldata string (prefixed with `0x`).
 
----
+***
 
 ### ABI Format
 
@@ -381,19 +381,19 @@ const ESCROW_ABI = [
 
 ### Supported Types
 
-| Solidity Type | Example Value | Notes |
-|---|---|---|
-| `uint256` | `10000000` or `"10000000"` | Integers or numeric strings |
-| `int256` | `-1` or `"-1"` | Signed integers |
-| `address` | `"0xaC2D...c526"` | Hex string, checksummed |
-| `bytes32` | `"0x5468..."` | Hex string, 32 bytes |
-| `bytes` | `"0x1234..."` | Dynamic-length hex string |
-| `string` | `"hello"` | UTF-8 string |
-| `bool` | `true` / `false` | Boolean |
-| `uint256[]` | `[1, 2, 3]` | Array of uint256 |
-| `tuple` | `{ field1: val1, field2: val2 }` | Struct |
+| Solidity Type | Example Value                    | Notes                       |
+| ------------- | -------------------------------- | --------------------------- |
+| `uint256`     | `10000000` or `"10000000"`       | Integers or numeric strings |
+| `int256`      | `-1` or `"-1"`                   | Signed integers             |
+| `address`     | `"0xaC2D...c526"`                | Hex string, checksummed     |
+| `bytes32`     | `"0x5468..."`                    | Hex string, 32 bytes        |
+| `bytes`       | `"0x1234..."`                    | Dynamic-length hex string   |
+| `string`      | `"hello"`                        | UTF-8 string                |
+| `bool`        | `true` / `false`                 | Boolean                     |
+| `uint256[]`   | `[1, 2, 3]`                      | Array of uint256            |
+| `tuple`       | `{ field1: val1, field2: val2 }` | Struct                      |
 
----
+***
 
 ## 4. Browser Contract Interaction (QR Code)
 
@@ -438,18 +438,14 @@ sequenceDiagram
 ### Step by Step
 
 1. **DApp backend creates session** — calls `POST /dapp/contract/create` with `contractAddress`, `calldata`, `value`, and optionally `methodName`. Receives a `sessionToken` (UUID) and `expireAt` timestamp.
+2.  **Display QR code** — encode the deep link into a QR code:
 
-2. **Display QR code** — encode the deep link into a QR code:
-   ```
-   nexlink://contract?token=<sessionToken>&dapp=<dappId>
-   ```
-
+    ```
+    nexlink://contract?token=<sessionToken>&dapp=<dappId>
+    ```
 3. **Browser polls** — dApp frontend polls its own backend, which calls `POST /dapp/contract/status` with `sessionToken`.
-
 4. **User scans QR** — NexLink app parses the deep link, fetches contract call details from `POST /browser/contract/info`, and shows the confirmation UI.
-
 5. **User confirms** — biometric unlock → sign transaction → broadcast → report `txHash` via `POST /browser/contract/confirm`.
-
 6. **DApp receives result** — status query returns `status: 2` (confirmed) with `txHash`.
 
 ### Deep Link Format
@@ -458,10 +454,10 @@ sequenceDiagram
 nexlink://contract?token=<sessionToken>&dapp=<dappId>
 ```
 
-| Parameter | Required | Description |
-|---|---|---|
-| `token` | Yes | One-time contract session UUID |
-| `dapp` | Yes | dApp numeric ID |
+| Parameter | Required | Description                    |
+| --------- | -------- | ------------------------------ |
+| `token`   | Yes      | One-time contract session UUID |
+| `dapp`    | Yes      | dApp numeric ID                |
 
 > **Security:** No contract address, calldata, or value in the QR code. All details come from the NexLink backend after scanning.
 
@@ -493,7 +489,7 @@ async function pollContractStatus(sessionToken) {
 }
 ```
 
----
+***
 
 ## 5. Confirmation UI
 
@@ -542,7 +538,7 @@ When a dApp requests a contract call, the NexLink app shows a native confirmatio
 
 Layer 3 provides a better user experience by showing the decoded function name and parameters instead of raw byte counts.
 
----
+***
 
 ## 6. Common Patterns
 
@@ -667,7 +663,7 @@ async function callContract(contractAddr, abi, method, args) {
 }
 ```
 
----
+***
 
 ## 7. Security Model
 
@@ -696,59 +692,59 @@ flowchart LR
 
 ### Key Security Properties
 
-| Property | Mechanism |
-|---|---|
-| **User consent** | Every write call requires native confirmation UI with biometric unlock. DApp cannot auto-send. |
-| **No blind signing** | Layer 3 shows decoded function name and parameters. Layer 1/2 show contract address and byte count. |
-| **Contract address visible** | Confirmation UI always displays the target contract address. User can verify. |
-| **Value display** | Native token value (NKT) is always shown. User can see if ETH/NKT is being sent. |
-| **QR code safety** | QR contains only `sessionToken` + `dappId`. No contract address, calldata, or value. |
-| **Read calls are free** | `contract.read()` never prompts the user. View/pure calls don't require signing. |
-| **ABI integrity** | Layer 3: ABI provided by dApp frontend. User trusts the dApp to provide correct ABI. Layer 1: ABI handled by Web3 library. |
+| Property                     | Mechanism                                                                                                                  |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| **User consent**             | Every write call requires native confirmation UI with biometric unlock. DApp cannot auto-send.                             |
+| **No blind signing**         | Layer 3 shows decoded function name and parameters. Layer 1/2 show contract address and byte count.                        |
+| **Contract address visible** | Confirmation UI always displays the target contract address. User can verify.                                              |
+| **Value display**            | Native token value (NKT) is always shown. User can see if ETH/NKT is being sent.                                           |
+| **QR code safety**           | QR contains only `sessionToken` + `dappId`. No contract address, calldata, or value.                                       |
+| **Read calls are free**      | `contract.read()` never prompts the user. View/pure calls don't require signing.                                           |
+| **ABI integrity**            | Layer 3: ABI provided by dApp frontend. User trusts the dApp to provide correct ABI. Layer 1: ABI handled by Web3 library. |
 
 ### Layer Comparison
 
-| Concern | Layer 1 (EIP-1193) | Layer 3 (NexlinkApp.contract) | Browser QR |
-|---|---|---|---|
-| Who encodes calldata? | Web3 library (ethers/viem) | NexLink SDK | dApp backend |
-| Confirmation detail | Byte count | Decoded function + args | Depends on backend info |
-| Wallet portability | Works with any wallet | NexLink only | NexLink only |
-| Read calls | Via Web3 library | `contract.read()` | Not applicable |
-| Browser support | In-app only | In-app only | External browsers |
+| Concern               | Layer 1 (EIP-1193)         | Layer 3 (NexlinkApp.contract) | Browser QR              |
+| --------------------- | -------------------------- | ----------------------------- | ----------------------- |
+| Who encodes calldata? | Web3 library (ethers/viem) | NexLink SDK                   | dApp backend            |
+| Confirmation detail   | Byte count                 | Decoded function + args       | Depends on backend info |
+| Wallet portability    | Works with any wallet      | NexLink only                  | NexLink only            |
+| Read calls            | Via Web3 library           | `contract.read()`             | Not applicable          |
+| Browser support       | In-app only                | In-app only                   | External browsers       |
 
----
+***
 
 ## 8. Implementation Checklist
 
 ### NexLink Backend (Go)
 
-- [x] `ContractSession` model — `sessionToken`, `contractAddress`, `calldata`, `value`, `methodName`, `expireAt`, `status`
-- [x] `ContractSessionService` — business logic (create, info, confirm, status)
-- [x] `POST /dapp/contract/create` — create contract call session for QR flow (MD5 auth)
-- [x] `POST /browser/contract/info` — return contract call details for scanned QR (JWT auth)
-- [x] `POST /browser/contract/confirm` — user confirms QR contract call (JWT auth)
-- [x] `POST /dapp/contract/status` — query contract call session status (MD5 auth)
+* [x] `ContractSession` model — `sessionToken`, `contractAddress`, `calldata`, `value`, `methodName`, `expireAt`, `status`
+* [x] `ContractSessionService` — business logic (create, info, confirm, status)
+* [x] `POST /dapp/contract/create` — create contract call session for QR flow (MD5 auth)
+* [x] `POST /browser/contract/info` — return contract call details for scanned QR (JWT auth)
+* [x] `POST /browser/contract/confirm` — user confirms QR contract call (JWT auth)
+* [x] `POST /dapp/contract/status` — query contract call session status (MD5 auth)
 
 ### NexLink App (Dart)
 
-- [x] `ContractModule` bridge module (`contract_module.dart`)
-- [x] Bridge handler: `nexlink_contract_call` (write call)
-- [x] Bridge handler: `nexlink_contract_read` (read call)
-- [x] Bridge handler: `nexlink_contract_encode` (calldata encode)
-- [x] `AbiCodec` — ABI encoder/decoder (`abi_codec.dart` in `nexlink_wallet`)
-- [x] `BridgeRpcHelper` — shared JSON-RPC helper for `eth_call`
-- [x] Decoded contract call confirmation UI
-- [x] Deep link handler: `nexlink://contract?token=<sessionToken>`
+* [x] `ContractModule` bridge module (`contract_module.dart`)
+* [x] Bridge handler: `nexlink_contract_call` (write call)
+* [x] Bridge handler: `nexlink_contract_read` (read call)
+* [x] Bridge handler: `nexlink_contract_encode` (calldata encode)
+* [x] `AbiCodec` — ABI encoder/decoder (`abi_codec.dart` in `nexlink_wallet`)
+* [x] `BridgeRpcHelper` — shared JSON-RPC helper for `eth_call`
+* [x] Decoded contract call confirmation UI
+* [x] Deep link handler: `nexlink://contract?token=<sessionToken>`
 
 ### JS SDK
 
-- [x] `NexlinkApp.contract.call()` in `_coreSdk`
-- [x] `NexlinkApp.contract.read()` in `_coreSdk`
-- [x] `NexlinkApp.contract.encode()` in `_coreSdk`
-- [x] Stub SDK contract namespace (for pre-load queuing)
+* [x] `NexlinkApp.contract.call()` in `_coreSdk`
+* [x] `NexlinkApp.contract.read()` in `_coreSdk`
+* [x] `NexlinkApp.contract.encode()` in `_coreSdk`
+* [x] Stub SDK contract namespace (for pre-load queuing)
 
 ### Documentation
 
-- [x] CONTRACT.md — this document
-- [x] API.md — add contract types and endpoints
-- [x] SUMMARY.md — add Contract Interaction link
+* [x] CONTRACT.md — this document
+* [x] API.md — add contract types and endpoints
+* [x] SUMMARY.md — add Contract Interaction link

@@ -1,6 +1,6 @@
 # Summary
 
-* [Introduction](README.md)
+* [Introduction](../)
 * [API Reference](API.md)
 * [Login & Registration](AUTH.md)
 * [Payment Integration](PAYMENT.md)
