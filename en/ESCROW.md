@@ -4,6 +4,8 @@
 
 Escrow (担保支付) lets two parties transact without trusting each other: funds are **locked in a contract**, and only released when the deal completes — or refunded / adjudicated by a jury if it doesn't. This is the settlement layer behind **K币担保 (Danbao)**, NexLink's guaranteed-trade dApp.
 
+> **Trust an anonymous counterparty without deanonymizing them.** An escrow platform can gate participation on a **zero-knowledge proof** — the user's 主身份 proves a required property (creditworthy / no negative record / KYC) for their anonymous identity, revealing nothing else. This is the flagship use case of the [Identity System §4](IDENTITY.md) + [Honor & Reputation](HONOR.md).
+
 For simple, unconditional payments, use [Direct transfer / order-based payment](PAYMENT.md). Use escrow when the payer needs protection until goods/services are delivered.
 
 For the raw contract-call mechanics, see [Contract Interaction](CONTRACT.md). For API/type specs, see [API Reference](API.md#escrow-api).

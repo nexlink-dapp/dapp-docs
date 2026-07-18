@@ -114,6 +114,8 @@ The deployer becomes the collection **owner** — the wallet allowed to `mint`. 
 
 A soulbound token is an ERC-721 that **cannot be transferred** after it is minted — it is permanently bound to the receiving wallet. In OpenZeppelin v5, gate the internal `_update` hook: allow mint (`from == 0`) and burn (`to == 0`), but revert on wallet-to-wallet transfers.
 
+> **Honors & credentials.** When a soulbound token is used as an **honor** (a degree, credit record, or negative record) bound to a person, it binds to an **identity** and aggregates to the **主身份** — see [Honor & Reputation](HONOR.md) and [Identity System](IDENTITY.md).
+
 ```solidity
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;

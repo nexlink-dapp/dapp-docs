@@ -114,6 +114,8 @@ console.log("Collection:", await nft.getAddress());
 
 灵魂绑定代币是一种在铸造后**无法转让**的 ERC-721——它被永久绑定到接收钱包。在 OpenZeppelin v5 中，通过对内部 `_update` 钩子加门控实现：允许铸造（`from == 0`）和销毁（`to == 0`），但对钱包到钱包的转让进行回退（revert）。
 
+> **荣誉与凭证。** 当灵魂绑定代币被用作绑定到个人的**荣誉**（学历、信用记录或不良记录）时，它绑定到某个**身份**并汇总到**主身份**——见 [荣誉与声誉](HONOR.md) 与 [身份系统](IDENTITY.md)。
+
 ```solidity
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;

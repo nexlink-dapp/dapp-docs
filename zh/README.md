@@ -15,11 +15,13 @@ NexLink 是一款内置 dApp 浏览器的移动端钱包与消息应用。第三
 | 能力 | 说明 | 文档 | 状态 |
 |---|---|---|---|
 | **Authentication** | 通过签名的 initData（应用内）或二维码登录（浏览器）识别用户 | [登录与注册](AUTH.md) | 已上线 |
+| **Identity** | 多身份人格（主身份 / 认证 / 匿名）；荣誉汇总到主身份；零知识信任证明 | [身份系统](IDENTITY.md) | 设计（提案阶段） |
 | **Token Payments** | 通过订单支付或直接转账流程接收 USDK/CNYT 支付 | [支付集成](PAYMENT.md) | 已上线 |
 | **Escrow / Guaranteed Payment** | 在交易完成前锁定资金；带陪审团争议裁决的 C2C + Guarantee 合约（K币担保） | [担保支付](ESCROW.md) | 已上线 |
 | **Subscription Payment** | 每笔扣款均需用户确认的周期性计费——绝无静默自动扣款 | [订阅支付](SUBSCRIPTION.md) | 设计（提案阶段） |
 | **Contract Interaction** | 通过钱包调用 NEXLK 链上的任意智能合约 | [合约交互](CONTRACT.md) | 已上线 |
 | **NFT Issuance** | 发行普通及灵魂绑定（SBT）ERC-721 代币 | [NFT 发行](NFT.md) | SDK 已就绪 |
+| **Honor / Reputation** | 灵魂绑定荣誉与不良记录；链上声誉（信任体系） | [荣誉与声誉](HONOR.md) | 设计（提案阶段） |
 | **Community Governance** | 质押、发起提案与投票；代言人身份（Delegate ID）以 NFT 形式呈现（Tally 风格 DAO） | [社区治理](GOVERNANCE.md) | 设计（提案阶段） |
 
 所有能力均通过两种渠道运作：
@@ -232,11 +234,13 @@ if (window.ethereum) { /* EIP-1193 provider available (in-app only) */ }
 |---|---|
 | [API Reference](API.md) | 类型、接口与 JS SDK 方法签名 |
 | [登录与注册](AUTH.md) | initData、签名验证、二维码登录、账号绑定 |
+| [身份系统](IDENTITY.md) | 多身份模型（主身份/认证/匿名）、荣誉汇总、零知识信任证明 |
 | [支付集成](PAYMENT.md) | USDK/CNYT 支付——直接转账与订单支付流程 |
 | [担保支付](ESCROW.md) | C2C + Guarantee 担保合约、角色、陪审团争议裁决（K币担保） |
 | [订阅支付](SUBSCRIPTION.md) | 先确认后扣款的周期性计费（设计规范） |
 | [合约交互](CONTRACT.md) | 智能合约调用——EIP-1193、NexLink SDK 及二维码流程 |
 | [NFT 发行](NFT.md) | 普通及灵魂绑定（SBT）ERC-721 的发行与铸造 |
+| [荣誉与声誉](HONOR.md) | 灵魂绑定荣誉、不良记录、声誉，以及荣誉的 ZK 证明 |
 | [社区治理](GOVERNANCE.md) | 质押、提案、投票以及代言人身份（Delegate ID）NFT（设计规范） |
 
 ---

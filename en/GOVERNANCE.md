@@ -294,6 +294,8 @@ flowchart TB
 
 Because Senate seats are NFTs — ideally soulbound — capital cannot buy them on the market, which is exactly the attack the veto exists to stop.
 
+> **One person, one vote.** Soulbound Senate seats are counted at the voter's **主身份** — the identity that maps to a physical person, exactly one per person — so a user's multiple personas cannot inflate votes. See [Identity System](IDENTITY.md).
+
 ### 5.3 Implementation on the standard stack
 
 The model needs no exotic machinery — it is **two Governor contracts + one shared timelock**:
