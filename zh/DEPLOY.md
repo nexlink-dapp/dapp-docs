@@ -19,13 +19,16 @@ flowchart LR
 |---|---|
 | 链 ID | `2026777` |
 | RPC 地址 | 你的 NEXLK RPC（设置 `NEXLINK_RPC_URL`） |
-| 类型 | 兼容 EVM——创世即启用 **Shanghai + Cancun**；Solidity `^0.8.20` 默认设置即可 |
+| 类型 | 兼容 EVM——创世即启用 **Shanghai + Cancun**；用 Solidity `0.8.24` + `evmVersion: "cancun"` 编译（与参考合约一致） |
 
 **Hardhat**（`hardhat.config.js`）：
 
 ```javascript
 module.exports = {
-  solidity: "0.8.20",
+  solidity: {
+    version: "0.8.24",
+    settings: { evmVersion: "cancun" },     // 匹配 NEXLK（已启用 Shanghai + Cancun）
+  },
   networks: {
     nexlk: {
       url: process.env.NEXLINK_RPC_URL,     // NEXLK RPC

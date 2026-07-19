@@ -19,13 +19,16 @@ flowchart LR
 |---|---|
 | Chain ID | `2026777` |
 | RPC URL | your NEXLK RPC (set `NEXLINK_RPC_URL`) |
-| Type | EVM-compatible — **Shanghai + Cancun** active from genesis; Solidity `^0.8.20` works with default settings |
+| Type | EVM-compatible — **Shanghai + Cancun** active from genesis; compile with Solidity `0.8.24` + `evmVersion: "cancun"` (as the reference contracts do) |
 
 **Hardhat** (`hardhat.config.js`):
 
 ```javascript
 module.exports = {
-  solidity: "0.8.20",
+  solidity: {
+    version: "0.8.24",
+    settings: { evmVersion: "cancun" },     // matches NEXLK (Shanghai + Cancun active)
+  },
   networks: {
     nexlk: {
       url: process.env.NEXLINK_RPC_URL,     // NEXLK RPC
