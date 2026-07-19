@@ -19,7 +19,7 @@ flowchart LR
 |---|---|
 | Chain ID | `2026777` |
 | RPC URL | your NEXLK RPC (set `NEXLINK_RPC_URL`) |
-| Type | EVM-compatible; Solidity `^0.8.20` |
+| Type | EVM-compatible — **Shanghai + Cancun** active from genesis; Solidity `^0.8.20` works with default settings |
 
 **Hardhat** (`hardhat.config.js`):
 
@@ -37,8 +37,6 @@ module.exports = {
 ```
 
 **Foundry** (`foundry.toml` + `--rpc-url $NEXLINK_RPC_URL --chain 2026777`) works identically — use whichever toolchain you prefer.
-
-> **If a deploy fails with an invalid-opcode / `PUSH0` error**, the NEXLK EVM predates Shanghai — pin the compiler to the Paris target: `solidity: { version: "0.8.20", settings: { evmVersion: "paris" } }`. (Solidity `0.8.20` defaults to the Shanghai EVM, which emits `PUSH0`.)
 
 > **Keep the deployer key server-side.** The account you deploy from becomes the contract **owner** (the wallet allowed to `mint`, set config, etc.). Never ship it in frontend code.
 

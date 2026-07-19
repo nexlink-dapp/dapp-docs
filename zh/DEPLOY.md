@@ -19,7 +19,7 @@ flowchart LR
 |---|---|
 | 链 ID | `2026777` |
 | RPC 地址 | 你的 NEXLK RPC（设置 `NEXLINK_RPC_URL`） |
-| 类型 | 兼容 EVM；Solidity `^0.8.20` |
+| 类型 | 兼容 EVM——创世即启用 **Shanghai + Cancun**；Solidity `^0.8.20` 默认设置即可 |
 
 **Hardhat**（`hardhat.config.js`）：
 
@@ -37,8 +37,6 @@ module.exports = {
 ```
 
 **Foundry**（`foundry.toml` + `--rpc-url $NEXLINK_RPC_URL --chain 2026777`）用法相同——任选其一。
-
-> **若部署报无效操作码 / `PUSH0` 错误**，说明 NEXLK 的 EVM 早于 Shanghai——请将编译目标固定为 Paris：`solidity: { version: "0.8.20", settings: { evmVersion: "paris" } }`。（Solidity `0.8.20` 默认使用 Shanghai EVM，会产生 `PUSH0`。）
 
 > **部署私钥务必放在服务端。** 你用来部署的账户会成为合约 **owner**（有权 `mint`、设置配置等的钱包）。切勿将其放入前端代码。
 
