@@ -11,7 +11,6 @@
   * [NexLink Honor & Reputation](en/HONOR.md)
   * [Payment Integration](en/PAYMENT.md)
   * [NexLink dApp Subscription Payment](en/SUBSCRIPTION.md)
-  * [Summary](en/SUMMARY.md)
 * [NexLink dApp 平台](zh/README.md)
   * [Nexlink dApp API 参考](zh/API.md)
   * [AUTH](zh/AUTH.md)
@@ -23,4 +22,3 @@
   * [NexLink 荣誉与声誉（Honor & Reputation）](zh/HONOR.md)
   * [NexLink dApp 支付集成](zh/PAYMENT.md)
   * [NexLink dApp 订阅支付（Subscription）](zh/SUBSCRIPTION.md)
-  * [目录](zh/SUMMARY.md)
