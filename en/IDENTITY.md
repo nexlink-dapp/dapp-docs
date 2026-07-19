@@ -45,16 +45,16 @@ flowchart TB
     A -->|initData| D2["dApp sees identity A — cannot link to M"]
 ```
 
-> **initData is per-identity.** When the identity model ships, the signed `initData` a dApp receives ([AUTH.md](AUTH.md)) identifies the **currently active identity**. Switching identity yields a different `initData`. Design your account model around the identity, not the person.
+> **initData is per-identity.** When the identity model ships, the signed `initData` a dApp receives ([Login & Registration](AUTH.md)) identifies the **currently active identity**. Switching identity yields a different `initData`. Design your account model around the identity, not the person.
 
 ---
 
 ## 3. Honor aggregation to the main identity
 
-Honors and credentials ([HONOR.md](HONOR.md)) **bind to the identity that earns them**, but **all of a person's honors aggregate up to their 主身份** — the person-level résumé. Because the 主身份 is one-per-person, this makes person-level facts **un-dodgeable**:
+Honors and credentials ([Honor & Reputation](HONOR.md)) **bind to the identity that earns them**, but **all of a person's honors aggregate up to their 主身份** — the person-level résumé. Because the 主身份 is one-per-person, this makes person-level facts **un-dodgeable**:
 
 - A **bad record** earned on any persona still surfaces at the 主身份 — a user cannot escape it by switching identity.
-- **One-person-one-vote** is counted at the 主身份 — extra identities add no votes (see [GOVERNANCE.md](GOVERNANCE.md)).
+- **One-person-one-vote** is counted at the 主身份 — extra identities add no votes (see [Community Governance](GOVERNANCE.md)).
 - **On-chain credit** is evaluated at the person level.
 
 The aggregation is **inward** — the user's own consolidated view plus person-level enforcement. It is **never** exposed to other users as a public link between personas.
@@ -76,7 +76,7 @@ flowchart LR
     R --> G["dApp gate verifies<br/>property holds — identity never revealed"]
 ```
 
-So **privacy and trust both hold**: the dApp learns *"this anonymous user clears the bar,"* never *who* they are. **Escrow ([ESCROW.md](ESCROW.md)) is the flagship use case** — a guaranteed-trade dApp can require a ZK-attested credit/reputation bar while keeping the trader anonymous.
+So **privacy and trust both hold**: the dApp learns *"this anonymous user clears the bar,"* never *who* they are. **Escrow ([Escrow](ESCROW.md)) is the flagship use case** — a guaranteed-trade dApp can require a ZK-attested credit/reputation bar while keeping the trader anonymous.
 
 ### 4.1 Proposed SDK surface
 
@@ -112,7 +112,7 @@ const { proof, publicSignals } = await NexlinkApp.identity.prove({
 ## 6. What Needs Building
 
 - [ ] Identity model (主身份 / 认证身份 / 匿名身份) + per-identity `initData`
-- [ ] Honor aggregation to 主身份 (person-level rollup) — see [HONOR.md](HONOR.md)
+- [ ] Honor aggregation to 主身份 (person-level rollup) — see [Honor & Reputation](HONOR.md)
 - [ ] ZK proof service: 主身份-issued, user-authorized proofs over aggregated honors (creditworthy / no negative record / KYC)
 - [ ] Predicate registry + verification keys a dApp backend / contract can check
 - [ ] `NexlinkApp.identity.prove()` SDK surface

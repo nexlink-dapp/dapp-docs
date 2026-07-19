@@ -1,6 +1,6 @@
 # NexLink Honor & Reputation
 
-> **Status: Contract mechanics SDK-ready; honor-wall UX and issuance pipeline are Design / Proposed.** Soulbound ERC-721 tokens — the on-chain substrate for honors — **can be deployed and minted today** (see [NFT.md](NFT.md)). The first-party **honor wall**, the issuance pipeline for organizations, and the negative-record policy are proposed. This document is the product-level concept a dApp integrates with; [NFT.md](NFT.md) is the contract-level reference.
+> **Status: Contract mechanics SDK-ready; honor-wall UX and issuance pipeline are Design / Proposed.** Soulbound ERC-721 tokens — the on-chain substrate for honors — **can be deployed and minted today** (see [NFT Issuance](NFT.md)). The first-party **honor wall**, the issuance pipeline for organizations, and the negative-record policy are proposed. This document is the product-level concept a dApp integrates with; [NFT Issuance](NFT.md) is the contract-level reference.
 
 An **honor (荣誉)** is a **soulbound token (SBT, 灵魂代币)** an organization issues to a person to certify something they earned and cannot buy — a degree, a competition result, research or work output — or a **negative record** (unpaid debt, a violation). Together, a person's honors form a **reputation (信任体系)** rendered as an in-app **honor wall (荣誉墙)**.
 
@@ -10,9 +10,9 @@ An **honor (荣誉)** is a **soulbound token (SBT, 灵魂代币)** an organizati
 
 | Property | Detail |
 |---|---|
-| **Non-transferable** | An honor is an SBT — it **cannot be sold, sent, or moved** ([NFT.md §4](NFT.md#4-soulbound-tokens-sbt)). This is what makes it credible: it proves the holder actually earned it. |
+| **Non-transferable** | An honor is an SBT — it **cannot be sold, sent, or moved** ([NFT Issuance §4](NFT.md#4-soulbound-tokens-sbt)). This is what makes it credible: it proves the holder actually earned it. |
 | **Issuer-revocable** | Only the **issuer** can revoke (burn) it — e.g. a debt is repaid → the issuer clears the negative record. |
-| **Bound to an identity, aggregated to 主身份** | An honor binds to the identity that earns it, and **all of a person's honors aggregate to their 主身份** — see [IDENTITY.md §3](IDENTITY.md#3-honor-aggregation-to-the-main-identity). |
+| **Bound to an identity, aggregated to 主身份** | An honor binds to the identity that earns it, and **all of a person's honors aggregate to their 主身份** — see [Identity System §3](IDENTITY.md#3-honor-aggregation-to-the-main-identity). |
 
 | Category (原文) | Example | Polarity |
 |---|---|---|
@@ -27,7 +27,7 @@ These are the canonical **Soulbound Token** use cases (identity verification, on
 
 ## 2. Issuing an honor (as a dApp / organization)
 
-An honor is a soulbound ERC-721 mint. **First obtain a Foundation root certificate** (§4) — without a root SBT your honors won't count. Then mint from your certified contract. The contract mechanics are in [NFT.md](NFT.md); the honor-specific rules:
+An honor is a soulbound ERC-721 mint. **First obtain a Foundation root certificate** (§4) — without a root SBT your honors won't count. Then mint from your certified contract. The contract mechanics are in [NFT Issuance](NFT.md); the honor-specific rules:
 
 ```javascript
 // Mint a soulbound honor to a recipient identity's address.
@@ -40,7 +40,7 @@ const { txHash } = await NexlinkApp.contract.call({
 });
 ```
 
-**Honor metadata** extends the standard ERC-721 schema ([NFT.md §6](NFT.md#6-metadata)) with reputation fields:
+**Honor metadata** extends the standard ERC-721 schema ([NFT Issuance §6](NFT.md#6-metadata)) with reputation fields:
 
 ```json
 {
@@ -68,9 +68,9 @@ A negative record is an honor with `polarity: negative`. Three rules make it mea
 |---|---|
 | **Non-transferable** | can't be moved to escape it |
 | **No holder self-burn** | the holder must not delete their own bad record — **only the issuer** may revoke |
-| **Aggregates to 主身份** | surfaces at the one-per-person 主身份, so it **cannot be dodged by switching identity** ([IDENTITY.md §3](IDENTITY.md#3-honor-aggregation-to-the-main-identity)) |
+| **Aggregates to 主身份** | surfaces at the one-per-person 主身份, so it **cannot be dodged by switching identity** ([Identity System §3](IDENTITY.md#3-honor-aggregation-to-the-main-identity)) |
 
-> The generic soulbound contract in [NFT.md §4](NFT.md#4-soulbound-tokens-sbt) allows holder burn. **Negative-record collections must remove holder burn** and gate revoke to the issuer.
+> The generic soulbound contract in [NFT Issuance §4](NFT.md#4-soulbound-tokens-sbt) allows holder burn. **Negative-record collections must remove holder burn** and gate revoke to the issuer.
 
 ---
 
@@ -103,8 +103,8 @@ NexLink Foundation (Root CA)
 A dApp often needs to know a person **meets a bar** (creditworthy, no negative record, holds a credential) without seeing their whole résumé — especially when they act as an **匿名身份**. This is a **zero-knowledge proof** over the person's aggregated honors, issued by the **主身份**:
 
 - The dApp sets the **constraint (约束条件)**; the user's 主身份 proves it in ZK; the identity is never revealed.
-- See [IDENTITY.md §4](IDENTITY.md#4-trust-without-deanonymization--the-zk-proof) for the flow and the proposed `NexlinkApp.identity.prove()` surface.
-- **Escrow ([ESCROW.md](ESCROW.md)) is the flagship consumer** — gate a guaranteed trade on a ZK credit/reputation proof.
+- See [Identity System §4](IDENTITY.md#4-trust-without-deanonymization--the-zk-proof) for the flow and the proposed `NexlinkApp.identity.prove()` surface.
+- **Escrow ([Escrow](ESCROW.md)) is the flagship consumer** — gate a guaranteed trade on a ZK credit/reputation proof.
 
 ---
 
@@ -119,7 +119,7 @@ A dApp often needs to know a person **meets a bar** (creditworthy, no negative r
 
 ## 7. What Needs Building
 
-### Available today (via [NFT.md](NFT.md))
+### Available today (via [NFT Issuance](NFT.md))
 - [x] Soulbound ERC-721 collections on NEXLK (`2026777`)
 - [x] Mint + read via `NexlinkApp.contract`
 
