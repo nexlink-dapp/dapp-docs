@@ -1,4 +1,4 @@
-# NexLink 合约部署（Contract Deployment）
+# NexLink dApp 合约部署（Contract Deployment）
 
 > **状态：现已支持。** 向 NEXLK 链部署你自己的合约，使用任意标准 EVM 工具链即可——无需任何 NexLink 专用工具。本文档是开发者工作流的**部署**环节；部署完成后，你通过[合约交互](CONTRACT.md)驱动合约。（开发者门户的**一键同质化代币发行器**是另一条受管理的路径——本文档是自定义代币、NFT、担保、市场等的**自助部署**路线。）
 
@@ -19,7 +19,7 @@ flowchart LR
 |---|---|
 | 链 ID | `2026777` |
 | RPC 地址 | 你的 NEXLK RPC（设置 `NEXLINK_RPC_URL`） |
-| 类型 | 兼容 EVM（EVM ≥ Shanghai；Solidity `^0.8.20`） |
+| 类型 | 兼容 EVM；Solidity `^0.8.20` |
 
 **Hardhat**（`hardhat.config.js`）：
 
@@ -37,6 +37,8 @@ module.exports = {
 ```
 
 **Foundry**（`foundry.toml` + `--rpc-url $NEXLINK_RPC_URL --chain 2026777`）用法相同——任选其一。
+
+> **若部署报无效操作码 / `PUSH0` 错误**，说明 NEXLK 的 EVM 早于 Shanghai——请将编译目标固定为 Paris：`solidity: { version: "0.8.20", settings: { evmVersion: "paris" } }`。（Solidity `0.8.20` 默认使用 Shanghai EVM，会产生 `PUSH0`。）
 
 > **部署私钥务必放在服务端。** 你用来部署的账户会成为合约 **owner**（有权 `mint`、设置配置等的钱包）。切勿将其放入前端代码。
 
