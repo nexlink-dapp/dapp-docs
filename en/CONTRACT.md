@@ -210,6 +210,8 @@ sequenceDiagram
 | `status` | String | Always `"sent"` (Promise only resolves on success) |
 | `txHash` | String | On-chain transaction hash                          |
 
+> **Multi-signature wallets:** the Promise does **not** resolve with a `txHash` — it **rejects** with a "sent to co-signers" message, because the transaction is pending co-signer approval. See [Multi-Signature Wallets](#multi-signature-wallets-co-signer-approval) — handle this as pending, not as a failure.
+
 #### Error Handling
 
 On cancellation or failure, the Promise **rejects** with an error. Use `try/catch`:
@@ -662,6 +664,53 @@ async function callContract(contractAddr, abi, method, args) {
   throw new Error("No wallet available");
 }
 ```
+
+### Multi-Signature Wallets: Co-Signer Approval
+
+The connected wallet may be a **multi-signature (M-of-N) wallet**. When it is, a write transaction is **not executed immediately** — the NexLink app publishes it as a proposal to the wallet's co-signers, and it only lands on-chain once enough of them approve.
+
+This changes what your write calls return:
+
+* **Single-signer wallet** — `contract.call()` / `NexlinkApp.wallet.sendTransaction()` / `eth_sendTransaction` resolves with a `txHash`, as documented above.
+* **Multi-signature wallet** — the call **rejects** (the Promise throws) with a message indicating the transaction was sent to co-signers, for example:
+  > "This is a multi-signature wallet. The transaction was sent to your co-signers for approval and will execute once enough of them sign."
+
+  Over EIP-1193 (Layer 1) this surfaces as a JSON-RPC error with code `-32603` carrying that message.
+
+**This rejection is _not_ a failure.** Treat it as "pending co-signer approval": the transaction executes later, out of band, once the signature threshold is met — or never, if the co-signers decline.
+
+#### How to handle it
+
+Do **not** rely on the immediate return to decide success. Reconcile against on-chain state:
+
+```javascript
+try {
+  const result = await NexlinkApp.contract.call({ contract, abi, method, args });
+  onSubmitted(result.txHash);           // single-signer: executed now
+} catch (e) {
+  if (e.message === "user_rejected") return;      // user cancelled
+  if (isMultisigPending(e)) {
+    onPendingCoSignerApproval();         // "Waiting for co-signer approval…"
+    return;                             // NOT an error
+  }
+  showError(e.message);
+}
+
+// Detect the eventual on-chain execution via events / polling — never via the
+// call return, because for a multisig it never resolves with a hash:
+escrow.on("Frozen", (orderId) => onOrderFrozen(orderId));
+// or poll getOrderStatus(orderId) until it changes.
+
+function isMultisigPending(e) {
+  return typeof e?.message === "string" && e.message.includes("multi-signature");
+}
+```
+
+For an **escrow / payment** dApp this is critical: when a multisig user "locks", "sells", or `approve`s, the funds have **not** moved on the rejected call — the transfer executes only after co-signers approve. Drive your order state from the on-chain event, not from the SDK call resolving.
+
+#### Spending policy (token caps)
+
+A multisig wallet may also carry an on-chain **tiered spending policy**. Token `approve` / `transfer` / `increaseAllowance` amounts above a per-token cap are routed through a delayed, guardian-approved queue rather than executing immediately. So even a single-signer-eligible step can be deferred. As above: confirm allowance / balance from chain state before treating a step as complete — do not assume an `approve` took effect just because the call returned.
 
 ***
 

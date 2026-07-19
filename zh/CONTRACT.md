@@ -210,6 +210,8 @@ sequenceDiagram
 | `status` | String | 始终为 `"sent"`（Promise 仅在成功时 resolve） |
 | `txHash` | String | 链上交易哈希 |
 
+> **多签钱包：** Promise **不会**返回 `txHash`，而是**被 reject**，携带一条“已发送给联签人”的消息，因为交易正等待联签人审批。参见[多签钱包：联签人审批](#多签钱包联签人审批)——请按“待处理”处理，而非失败。
+
 #### Error Handling
 
 在取消或失败时，Promise 会以错误 **reject**。请使用 `try/catch`：
@@ -666,6 +668,53 @@ async function callContract(contractAddr, abi, method, args) {
   throw new Error("No wallet available");
 }
 ```
+
+### 多签钱包：联签人审批
+
+连接的钱包可能是**多签（M-of-N）钱包**。此时写交易**不会立即执行**——NexLink 会将其作为提案发送给该钱包的联签人，只有在足够多的联签人批准后，交易才会上链。
+
+这会改变写调用的返回：
+
+* **单签钱包**——`contract.call()` / `NexlinkApp.wallet.sendTransaction()` / `eth_sendTransaction` 照常 resolve 出 `txHash`。
+* **多签钱包**——调用会**被 reject**（Promise 抛出），并携带一条“已发送给联签人”的消息，例如：
+  > “这是多签钱包，交易已发送给联签人审批，待足够联签人签名后自动执行。”
+
+  在 EIP-1193（Layer 1）下，这会表现为一个 JSON-RPC 错误，错误码 `-32603`，并携带该消息。
+
+**这个 reject 不是失败。** 请将其视为“等待联签人审批”：交易会在达到签名阈值后异步执行——如果联签人拒绝，则不会执行。
+
+#### 如何处理
+
+**不要**依赖立即返回来判断成功。请以链上状态为准进行核对：
+
+```javascript
+try {
+  const result = await NexlinkApp.contract.call({ contract, abi, method, args });
+  onSubmitted(result.txHash);           // 单签：已执行
+} catch (e) {
+  if (e.message === "user_rejected") return;      // 用户取消
+  if (isMultisigPending(e)) {
+    onPendingCoSignerApproval();         // “等待联签人审批…”
+    return;                             // 不是错误
+  }
+  showError(e.message);
+}
+
+// 通过事件 / 轮询检测最终上链——绝不要依赖调用返回，
+// 因为多签场景下它永远不会 resolve 出交易哈希：
+escrow.on("Frozen", (orderId) => onOrderFrozen(orderId));
+// 或轮询 getOrderStatus(orderId) 直到状态改变。
+
+function isMultisigPending(e) {
+  return typeof e?.message === "string" && e.message.includes("多签");
+}
+```
+
+对于**担保 / 支付**类 dApp 这一点至关重要：当多签用户“锁仓”“卖出”或 `approve` 时，被 reject 的调用**并未**转移任何资金——只有在联签人批准后转账才会执行。请以链上事件驱动你的订单状态，而不是以 SDK 调用是否 resolve 为准。
+
+#### 消费策略（代币上限）
+
+多签钱包还可能带有链上**分级消费策略**。超过单代币上限的 `approve` / `transfer` / `increaseAllowance` 金额会走延迟、需守护人审批的队列，而不会立即执行。因此即便是本可单签的步骤也可能被延后。同样地：在把某一步视为完成前，请从链上确认授权额度 / 余额——不要因为 `approve` 调用返回就假定它已生效。
 
 ---
 
