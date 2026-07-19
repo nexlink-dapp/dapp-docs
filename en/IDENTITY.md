@@ -29,6 +29,8 @@ The **Foundation is the Root CA** for the platform's trust system: it runs this 
 
 A dApp authenticates the **active identity**, never the account or the other identities.
 
+> **Every interaction is identity-scoped; the account is never exposed.** All dApp (and external) interactions happen **as an identity** — the identity is what joins. The **account is kept strictly private**, because it is **bound to your 主身份** (your real / physical identity): leaking the account would leak the real person. So **account privacy is person privacy**, and it is a hard guarantee — a dApp never receives, and cannot derive, the account behind an identity.
+
 | A dApp can | A dApp cannot |
 |---|---|
 | Identify the active identity (its `uid`, nickname, avatar) via [`initData`](AUTH.md) | See the account, or that two identities share one |
@@ -102,7 +104,7 @@ const { proof, publicSignals } = await NexlinkApp.identity.prove({
 
 | Property | Mechanism |
 |---|---|
-| **Account privacy** | Login identifiers (email/phone) are never surfaced socially; a dApp sees only an identity's `uid`/nickname. |
+| **Account privacy (strict)** | The account is **never** exposed to a dApp or counterparty — it is bound to your **主身份** (real identity), so leaking it would leak the real person. dApps see only an identity's `uid`/nickname; login identifiers (email/phone) are never surfaced. |
 | **Identity isolation** | Each identity is a distinct signed subject; a dApp cannot enumerate or link a user's other identities. |
 | **Anonymity of 匿名身份** | The real person behind an anonymous persona is never exposed; aggregation to 主身份 is inward-only. |
 | **Un-dodgeable person facts** | Negative records, credit, and one-person-one-vote resolve at the one-per-person 主身份. |
