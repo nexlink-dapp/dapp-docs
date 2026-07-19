@@ -23,6 +23,8 @@ An **honor (荣誉)** is a **soulbound token (SBT, 灵魂代币)** an organizati
 
 These are the canonical **Soulbound Token** use cases (identity verification, on-chain credit, DAO anti-Sybil, credentials) applied to NexLink.
 
+> **Claim under any identity; the issuer stays blind to the 主身份.** A holder receives an honor as **whatever identity they're currently on** — the issuer mints to that persona and **never learns the holder's 主身份**. It still aggregates to the 主身份, so a person-level credit/reputation query finds it. This delivers **attack-resistance** (undodgeable — it rolls up to the one-per-person 主身份) **and privacy** (the issuer doesn't learn who the person really is) at once. See [Identity System §3](IDENTITY.md#3-honor-aggregation-to-the-main-identity).
+
 ---
 
 ## 2. Issuing an honor (as a dApp / organization)

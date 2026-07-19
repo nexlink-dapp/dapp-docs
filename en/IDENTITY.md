@@ -59,6 +59,8 @@ Honors and credentials ([Honor & Reputation](HONOR.md)) **bind to the identity t
 
 The aggregation is **inward** — the user's own consolidated view plus person-level enforcement. It is **never** exposed to other users as a public link between personas.
 
+> **Claim under any identity — the issuer stays blind to your 主身份.** You receive an honor as **whatever identity you're currently on**; the issuer mints to *that* persona and **cannot see your 主身份**. It still aggregates to your 主身份 (a person-level credit/reputation query finds it), so you get **both** at once: **attack-resistance** (a record can't be dodged or multiplied by switching identity) **and privacy** (the issuer never learns who you really are).
+
 ---
 
 ## 4. Trust without deanonymization — the ZK proof
