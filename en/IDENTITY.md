@@ -14,8 +14,19 @@ A NexLink user logs in with one **account (注册账号)**, but **acts as an ide
 | **Verified identity** | **认证身份** | A persona **certified through the 主身份** (linked to the real person, but a distinct acting identity). Can carry credible credentials. | many |
 | **Anonymous identity** | **匿名身份** | An anonymous persona for privacy — not publicly tied to the real identity. | many |
 
-- **主身份 is the "one person" unit.** Because it maps to a physical identity and there is exactly one per person, it is the basis for anti-Sybil, credit, and one-person-one-vote.
+- **主身份 is the "one entity" unit.** Because it maps to a real-world entity and there is exactly one per entity, it is the basis for anti-Sybil, credit, and one-person-one-vote.
 - Two identities of the same user are **indistinguishable from two different people** to a dApp and to other users.
+
+### The 主身份 entity: individual or organization
+
+A 主身份 represents an **entity (实体)**, of two kinds — **exactly one 主身份 per entity**:
+
+| Entity | 原文 | What it is |
+|---|---|---|
+| **Individual** | **个人** | a natural person (自然人) — one human |
+| **Organization** | **组织** | a legal entity — a **company (公司)** or a **government department (政府部门)** |
+
+**Organization 主身份 are the honor *issuers*:** they hold a Foundation **root certificate** and issue honors ([Honor & Reputation §4](HONOR.md)) — the root-cert types (**政府 / 基金会 / 其他机构**) *are* the organization kinds. **Individuals (自然人) are the *receivers*.**
 
 ### Each identity is an on-chain SBT (Foundation contract)
 

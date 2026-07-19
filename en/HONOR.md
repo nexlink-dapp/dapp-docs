@@ -92,6 +92,8 @@ Honors are gated by an on-chain **certificate hierarchy** (a decentralized PKI) 
 
 - Only a holder of a root SBT can mint honor SBTs from its verified contract. An honor's credibility comes from **which root-cert type its issuer holds** — the honor wall badges honors by tier, **read on-chain from the issuer's root SBT** (never from spoofable metadata).
 
+> An issuer is an **organization 主身份** ([Identity System §1](IDENTITY.md)) — a company or government body (or the Foundation). The three root-cert types **are** the organization kinds; **individuals (自然人) receive** honors, **organizations issue** them.
+
 ```
 NexLink Foundation (Root CA)
   └── Root SBT (通行证) — 3 types: 政府 / 基金会 / 其他机构
