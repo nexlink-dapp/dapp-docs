@@ -81,32 +81,18 @@ contract NexTestNft is ERC721, ERC721URIStorage, Ownable {
 
 ## 3. Deploying a Collection
 
-使用任意 EVM 工具链针对 NEXLK 链进行部署。以下是 Hardhat 网络配置示例：
+使用任意 EVM 工具链针对 NEXLK 链进行部署——**完整流程（网络配置、Hardhat/Foundry 环境、部署脚本、验证）见 [合约部署](DEPLOY.md)**；NFT 特有的部分如下：
 
 ```javascript
-// hardhat.config.js
-module.exports = {
-  solidity: "0.8.20",
-  networks: {
-    nexlk: {
-      url: process.env.NEXLINK_RPC_URL,   // NEXLK chain RPC
-      chainId: 2026777,
-      accounts: [process.env.DEPLOYER_PRIVATE_KEY],
-    },
-  },
-};
-```
-
-```javascript
-// scripts/deploy.js
+// scripts/deploy-nft.js —— 部署 NexTestNft（或 SoulboundNft）
 const [deployer] = await ethers.getSigners();
 const Nft = await ethers.getContractFactory("NexTestNft");
-const nft = await Nft.deploy(deployer.address);   // initialOwner = issuer
+const nft = await Nft.deploy(deployer.address);   // initialOwner = 发行方
 await nft.waitForDeployment();
 console.log("Collection:", await nft.getAddress());
 ```
 
-部署者成为合集的**拥有者（owner）**——即被允许 `mint` 的钱包。请将此密钥保管在服务端（后端/部署者），或将 owner 设为一个由你通过确认 UI 驱动其铸造的钱包。
+部署者成为合集的**拥有者（owner）**——即被允许 `mint` 的钱包。请将此密钥保管在服务端（后端/部署者），或将 owner 设为一个由你通过确认 UI 驱动其铸造的钱包。NEXLK 网络配置与工具链环境见 [合约部署 §1](DEPLOY.md)。
 
 ---
 
@@ -215,7 +201,8 @@ const count  = await NexlinkApp.contract.read({ contract: NFT_ADDRESS, abi: NFT_
 {
   "name": "NexLink Founder Badge #1",
   "description": "Awarded to early community members.",
-  "image": "ipfs://bafy.../image.png",
+  "image": "https://s3.bywenyue.com/nft/.../image.png",   // MinIO —— 快速 CDN 显示
+  "image_ipfs": "ipfs://bafy.../image.png",                // IPFS —— 不可变存证
   "attributes": [
     { "trait_type": "Tier", "value": "Founder" },
     { "trait_type": "Year", "value": "2026" }
@@ -223,7 +210,18 @@ const count  = await NexlinkApp.contract.read({ contract: NFT_ADDRESS, abi: NFT_
 }
 ```
 
-将元数据和图片托管在 IPFS（或其他内容寻址/不可变的存储）上，使代币内容在铸造后无法被悄然更改。在铸造时通过 `mint(to, uri)` 设置该 URI。
+### 图片存两个地址——MinIO + IPFS
+
+每张 NFT 图片都**同时**保存在两处，各司其职：
+
+| 存储 | 字段 | 用途 |
+|---|---|---|
+| **MinIO**（`https://s3.…`） | `image` | **快速显示**——钱包与画廊可即时渲染的 CDN 地址 |
+| **IPFS**（`ipfs://…`） | `image_ipfs` | **存证 / 溯源**——内容寻址且不可变，图片无法被悄然替换 |
+
+在铸造时将图片上传到 MinIO（求快）**并**固定（pin）到 IPFS（存证），并把两个地址都写入元数据。渲染方用 `image` 求快，并可对照 `image_ipfs` 校验。
+
+> **元数据 JSON 也要固定到 IPFS，并让 `tokenURI` 指向该 IPFS 副本**——这才能让记录在铸造后可防篡改。你可以把 JSON 同时镜像到 MinIO 以加快读取，但规范、可证明的 `tokenURI` 应为 `ipfs://` 那个。铸造时通过 `mint(to, uri)` 设置。
 
 ---
 

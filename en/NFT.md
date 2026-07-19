@@ -81,24 +81,10 @@ contract NexTestNft is ERC721, ERC721URIStorage, Ownable {
 
 ## 3. Deploying a Collection
 
-Deploy with any EVM toolchain against the NEXLK chain. Example Hardhat network config:
+Deploy the collection with any EVM toolchain against the NEXLK chain — the **full workflow (network config, Hardhat/Foundry setup, deploy script, verification)** lives in **[Contract Deployment](DEPLOY.md)**; the NFT-specific parts are:
 
 ```javascript
-// hardhat.config.js
-module.exports = {
-  solidity: "0.8.20",
-  networks: {
-    nexlk: {
-      url: process.env.NEXLINK_RPC_URL,   // NEXLK chain RPC
-      chainId: 2026777,
-      accounts: [process.env.DEPLOYER_PRIVATE_KEY],
-    },
-  },
-};
-```
-
-```javascript
-// scripts/deploy.js
+// scripts/deploy-nft.js — deploy NexTestNft (or SoulboundNft)
 const [deployer] = await ethers.getSigners();
 const Nft = await ethers.getContractFactory("NexTestNft");
 const nft = await Nft.deploy(deployer.address);   // initialOwner = issuer
@@ -106,7 +92,7 @@ await nft.waitForDeployment();
 console.log("Collection:", await nft.getAddress());
 ```
 
-The deployer becomes the collection **owner** — the wallet allowed to `mint`. Keep this key server-side (backend/deployer), or set the owner to a wallet whose mints you drive through the confirmation UI.
+The deployer becomes the collection **owner** — the wallet allowed to `mint`. Keep this key server-side (backend/deployer), or set the owner to a wallet whose mints you drive through the confirmation UI. See [Contract Deployment §1](DEPLOY.md) for the NEXLK network config and toolchain setup.
 
 ---
 
@@ -215,7 +201,8 @@ const count  = await NexlinkApp.contract.read({ contract: NFT_ADDRESS, abi: NFT_
 {
   "name": "NexLink Founder Badge #1",
   "description": "Awarded to early community members.",
-  "image": "ipfs://bafy.../image.png",
+  "image": "https://s3.bywenyue.com/nft/.../image.png",   // MinIO — fast CDN display
+  "image_ipfs": "ipfs://bafy.../image.png",                // IPFS — immutable proof (存证)
   "attributes": [
     { "trait_type": "Tier", "value": "Founder" },
     { "trait_type": "Year", "value": "2026" }
@@ -223,7 +210,18 @@ const count  = await NexlinkApp.contract.read({ contract: NFT_ADDRESS, abi: NFT_
 }
 ```
 
-Host metadata and images on IPFS (or another content-addressed/immutable store) so the token's contents cannot be silently changed after mint. Set the URI at mint time via `mint(to, uri)`.
+### Store the image at two addresses — MinIO + IPFS
+
+Every NFT image is kept in **both** stores, for two different jobs:
+
+| Store | Field | Purpose |
+|---|---|---|
+| **MinIO** (`https://s3.…`) | `image` | **Fast display** — a CDN URL wallets and galleries render instantly |
+| **IPFS** (`ipfs://…`) | `image_ipfs` | **Provenance / 存证** — content-addressed and immutable, so the image can't be silently swapped |
+
+Upload the image to MinIO (speed) *and* pin it to IPFS (proof) at mint time, and put both URLs in the metadata. Renderers use `image` for speed and can verify against `image_ipfs`.
+
+> **Pin the metadata JSON to IPFS too, and point `tokenURI` at that IPFS copy** — that's what makes the record tamper-evident after mint. You may mirror the JSON to MinIO for fast reads, but the canonical, provable `tokenURI` should be the `ipfs://` one. Set it at mint via `mint(to, uri)`.
 
 ---
 

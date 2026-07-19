@@ -20,6 +20,7 @@ NexLink 是一款内置 dApp 浏览器的移动端钱包与消息应用。第三
 | **Escrow / Guaranteed Payment** | 在交易完成前锁定资金；带陪审团争议裁决的 C2C + Guarantee 合约（K币担保） | [担保支付](ESCROW.md) | 已上线 |
 | **Subscription Payment** | 每笔扣款均需用户确认的周期性计费——绝无静默自动扣款 | [订阅支付](SUBSCRIPTION.md) | 设计（提案阶段） |
 | **Contract Interaction** | 通过钱包调用 NEXLK 链上的任意智能合约 | [合约交互](CONTRACT.md) | 已上线 |
+| **Contract Deployment** | 向 NEXLK 部署你自己的代币与 NFT（ERC-20/721），随后交互 | [合约部署](DEPLOY.md) | 已上线 |
 | **NFT Issuance** | 发行普通及灵魂绑定（SBT）ERC-721 代币 | [NFT 发行](NFT.md) | SDK 已就绪 |
 | **Honor / Reputation** | 灵魂绑定荣誉与不良记录；链上声誉（信任体系） | [荣誉与声誉](HONOR.md) | 设计（提案阶段） |
 | **Community Governance** | 质押、发起提案与投票；代言人身份（Delegate ID）以 NFT 形式呈现（Tally 风格 DAO） | [社区治理](GOVERNANCE.md) | 设计（提案阶段） |
@@ -239,6 +240,7 @@ if (window.ethereum) { /* EIP-1193 provider available (in-app only) */ }
 | [担保支付](ESCROW.md) | C2C + Guarantee 担保合约、角色、陪审团争议裁决（K币担保） |
 | [订阅支付](SUBSCRIPTION.md) | 先确认后扣款的周期性计费（设计规范） |
 | [合约交互](CONTRACT.md) | 智能合约调用——EIP-1193、NexLink SDK 及二维码流程 |
+| [合约部署](DEPLOY.md) | 向 NEXLK 部署你自己的代币 / NFT 合约——工具链、网络配置、验证 |
 | [NFT 发行](NFT.md) | 普通及灵魂绑定（SBT）ERC-721 的发行与铸造 |
 | [荣誉与声誉](HONOR.md) | 灵魂绑定荣誉、不良记录、声誉，以及荣誉的 ZK 证明 |
 | [社区治理](GOVERNANCE.md) | 质押、提案、投票以及代言人身份（Delegate ID）NFT（设计规范） |
