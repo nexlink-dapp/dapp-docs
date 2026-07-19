@@ -27,7 +27,7 @@ These are the canonical **Soulbound Token** use cases (identity verification, on
 
 ## 2. Issuing an honor (as a dApp / organization)
 
-An honor is a soulbound ERC-721 mint. The contract mechanics are in [NFT.md](NFT.md); the honor-specific rules:
+An honor is a soulbound ERC-721 mint. **First obtain a Foundation root certificate** (§4) — without a root SBT your honors won't count. Then mint from your certified contract. The contract mechanics are in [NFT.md](NFT.md); the honor-specific rules:
 
 ```javascript
 // Mint a soulbound honor to a recipient identity's address.
@@ -74,9 +74,27 @@ A negative record is an honor with `polarity: negative`. Three rules make it mea
 
 ---
 
-## 4. Trust anchoring — who may issue
+## 4. Trust anchoring — the Foundation is the Root CA
 
-Anyone can deploy an SBT collection, so an honor is only as trustworthy as its issuer. The honor wall distinguishes **recognized issuers** (via a platform issuer registry) from arbitrary mints — an unrecognized SBT is not presented as an endorsed credential. Issue honors from a **verified issuer** collection to have them count.
+Honors are gated by an on-chain **certificate hierarchy** (a decentralized PKI) so the market can't be flooded with fake credentials.
+
+- The **NexLink Foundation is the Root CA.** It maintains the single [Identity contract](IDENTITY.md) and anchors all honor trust.
+- **Anyone may run their own honor contract, but must first obtain a root certificate (根证书 / 根 SBT / 通行证) from the Foundation.** You deploy your honor contract; the Foundation **verifies it, then issues the root certificate** — a root SBT your issuer wallet holds.
+- The root certificate has **three types**, each a class of root SBT:
+
+| Root-cert type | 原文 | Issued to |
+|---|---|---|
+| **Government** | 政府 | government bodies |
+| **Foundation** | 基金会 | the Foundation itself |
+| **Institution** | 其他机构 | other recognized organizations |
+
+- Only a holder of a root SBT can mint honor SBTs from its verified contract. An honor's credibility comes from **which root-cert type its issuer holds** — the honor wall badges honors by tier, **read on-chain from the issuer's root SBT** (never from spoofable metadata).
+
+```
+NexLink Foundation (Root CA)
+  └── Root SBT (通行证) — 3 types: 政府 / 基金会 / 其他机构
+        └── your verified Honor contract → Honor SBTs → the identity's wallet
+```
 
 ---
 
@@ -92,7 +110,8 @@ A dApp often needs to know a person **meets a bar** (creditworthy, no negative r
 
 ## 6. Displaying honors
 
-- **In-app honor wall** — the NexLink app renders a person's honors in the personal center (positive and negative sections, grouped by category, verified-issuer badge).
+- **Two surfaces** — identity SBTs and honor SBTs show in **the wallet** (like any held token) *and* the **personal homepage (个人主页)** honor wall.
+- **Honor wall** — positive and negative sections, grouped by category, each honor badged by its issuer's **root-cert tier** (政府/基金会/其他机构).
 - **Per-identity vs aggregated** — a persona shows its own honors; the **主身份** shows the **aggregated** person-level set.
 - **In a dApp** — read a collection's `balanceOf` / `tokenURI` for a recipient, or (recommended) query a backend honor indexer rather than enumerating on-chain.
 
@@ -105,12 +124,12 @@ A dApp often needs to know a person **meets a bar** (creditworthy, no negative r
 - [x] Mint + read via `NexlinkApp.contract`
 
 ### Proposed
-- [ ] Honor metadata standard (category / polarity / issuer / evidence)
+- [ ] **Foundation Root-CA / root-certificate contract** — issues root SBTs in 3 types (政府/基金会/其他机构) after verifying an issuer's deployed contract
+- [ ] Honor metadata standard (category / polarity / issuer / evidence); honor mint gated on the issuer holding a root SBT
 - [ ] Negative-record collection variant (issuer-only revoke, no holder burn)
-- [ ] Issuer registry (recognized honor issuers) + verified-issuer badge
-- [ ] Honor issuance pipeline for organizations (paralleling the fungible-token issuer)
+- [ ] Root-certificate **application + verification flow** (replaces a permissionless issuer registry)
 - [ ] Honor aggregation to 主身份 + honor indexer / listing endpoints
-- [ ] In-app honor wall (personal center)
+- [ ] Honor wall in the **个人主页** + identity/honor SBTs in the **wallet**; root-cert tier badge
 
 ### Documentation
 - [x] HONOR.md — this document

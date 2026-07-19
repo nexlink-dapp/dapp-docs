@@ -17,6 +17,12 @@ A NexLink user logs in with one **account (注册账号)**, but **acts as an ide
 - **主身份 is the "one person" unit.** Because it maps to a physical identity and there is exactly one per person, it is the basis for anti-Sybil, credit, and one-person-one-vote.
 - Two identities of the same user are **indistinguishable from two different people** to a dApp and to other users.
 
+### Each identity is an on-chain SBT (Foundation contract)
+
+Every identity — 主身份 / 认证身份 / 匿名身份 — is itself a **non-transferable on-chain soulbound token (SBT)** held in the wallet, minted by **a single Identity contract that the NexLink Foundation maintains** — no third party can issue identities. The `identity_type` is on-chain metadata.
+
+The **Foundation is the Root CA** for the platform's trust system: it runs this Identity contract and **root-certifies honor issuers** (see [Honor & Reputation](HONOR.md)). Identity SBTs — and honor SBTs — display in **both the wallet and the personal homepage (个人主页)**.
+
 ---
 
 ## 2. What a dApp sees

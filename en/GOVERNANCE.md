@@ -6,6 +6,8 @@ Community governance (社区管理) lets a community **stake tokens for voting p
 
 Because every action is an ordinary contract call, governance needs **no governance-specific SDK** — it runs through the standard [Contract Interaction](CONTRACT.md) layers, each step signed by the user.
 
+> **Any DAO can use it.** This is a general, **Tally-style governance framework, not a NexLink-only system** — any community deploys its own governance token, Governor, and Delegate-ID NFT on chain `2026777` and gets the same tooling. NexLink's own governance is just one instance of it.
+
 ---
 
 ## 1. Overview
